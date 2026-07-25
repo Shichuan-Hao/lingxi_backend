@@ -1,42 +1,53 @@
-"""
-应用配置管理模块。
-
-使用 pydantic-settings 从 .env 文件加载配置，提供类型安全的配置访问。
-支持 DeepSeek 云端 API 和 Ollama 本地模型两种服务后端。
-"""
-
 from pydantic_settings import BaseSettings
 from enum import Enum
+from pathlib import Path
+
+# 获取项目根目录
+ROOT_DIR = Path(__file__).parent.parent.parent
+ENV_FILE = ROOT_DIR / ".env"
 
 class ServiceType(str, Enum):
-    """服务类型枚举：deepseek（云端 API）或 ollama（本地模型）"""
     DEEPSEEK = "deepseek"
     OLLAMA = "ollama"
 
 class Settings(BaseSettings):
-    """应用配置，从 .env 文件自动加载"""
-
-    # DeepSeek 云端 API 配置
+    # Deepseek settings
     DEEPSEEK_API_KEY: str
     DEEPSEEK_BASE_URL: str
     DEEPSEEK_MODEL: str
-
-    # Ollama 本地模型配置
+    
+    # Ollama settings
     OLLAMA_BASE_URL: str
     OLLAMA_CHAT_MODEL: str
     OLLAMA_REASON_MODEL: str
-
-    # 服务路由选择：chat/reason 接口分别走哪个服务
+    
+    # Service selection
     CHAT_SERVICE: ServiceType = ServiceType.DEEPSEEK
     REASON_SERVICE: ServiceType = ServiceType.OLLAMA
-
-    # 搜索引擎 API 密钥
+    
+    # Search settings
     SERPAPI_KEY: str
-
+    SEARCH_RESULT_COUNT: int = 3
+    
+    # Database settings
+    DB_HOST: str
+    DB_PORT: int
+    DB_USER: str
+    DB_PASSWORD: str
+    DB_NAME: str
+    
+    # JWT settings
+    SECRET_KEY: str = "your-secret-key"  # 在生产环境中使用安全的密钥
+    ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    
+    @property
+    def DATABASE_URL(self) -> str:
+        return f"mysql+aiomysql://{self.DB_USER}:{self.DB_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
+    
     class Config:
-        env_file = ".env"
+        env_file = str(ENV_FILE)  # 使用绝对路径
         env_file_encoding = "utf-8"
         case_sensitive = True
 
-# 全局单例配置对象
-settings = Settings()
+settings = Settings() 

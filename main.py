@@ -1,225 +1,194 @@
-"""
-灵犀（Lingxi）智能客服后端服务入口。
-
-本模块负责：
-- 创建 FastAPI 应用并注册所有路由（/chat、/reason、/search、/health）
-- 配置日志（控制台 + 文件滚动输出）
-- 配置 CORS 中间件
-- 挂载前端静态文件
-"""
-
-import logging
-from logging.handlers import RotatingFileHandler
-from pathlib import Path
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import List, Dict
-import aiohttp
-import asyncio
-from app.core.config import settings, ServiceType
 from app.services.llm_factory import LLMFactory
 from app.services.search_service import SearchService
 
 from fastapi.staticfiles import StaticFiles
-
-# 配置标准库 logging
-LOG_DIR = Path("logs")
-LOG_DIR.mkdir(exist_ok=True)
-
-# 日志格式：文件使用完整时间，控制台使用短时间
-FILE_FORMATTER = logging.Formatter(
-    "%(asctime)s | %(levelname)-8s | %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
-CONSOLE_FORMATTER = logging.Formatter(
-    "%(asctime)s | %(levelname)-8s | %(message)s",
-    datefmt="%H:%M:%S",
-)
-
-# 文件 handler：按大小滚动（10MB），保留 7 个备份
-file_handler = RotatingFileHandler(
-    LOG_DIR / "lingxi.log",
-    maxBytes=10 * 1024 * 1024,  # 10 MB
-    backupCount=7,
-    encoding="utf-8",
-)
-file_handler.setLevel(logging.INFO)
-file_handler.setFormatter(FILE_FORMATTER)
-
-# 控制台 handler
-console_handler = logging.StreamHandler()
-console_handler.setLevel(logging.INFO)
-console_handler.setFormatter(CONSOLE_FORMATTER)
-
-# 应用日志器
-logger = logging.getLogger("lingxi")
-logger.setLevel(logging.INFO)
-logger.addHandler(file_handler)
-logger.addHandler(console_handler)
-
-app = FastAPI(title="灵犀接口文档")
+from datetime import datetime
+from pathlib import Path
+from app.services.rag_service import RAGService
+from app.services.rag_chat_service import RAGChatService
+from app.core.logger import get_logger, log_structured
+from app.core.middleware import LoggingMiddleware
+from app.core.config import settings
+from app.api import api_router
 
 
-@app.on_event("startup")
-async def startup():
-    """启动事件：打印当前路由配置总览"""
-    logger.info("=" * 50)
-    logger.info("灵犀服务启动 - 当前路由配置：")
-    chat_svc = settings.CHAT_SERVICE.value
-    chat_model = settings.DEEPSEEK_MODEL if chat_svc == "deepseek" else settings.OLLAMA_CHAT_MODEL
-    logger.info(f"  普通对话 /chat   -> {chat_svc:8} | 模型: {chat_model}")
-    reason_svc = settings.REASON_SERVICE.value
-    reason_model = settings.DEEPSEEK_MODEL if reason_svc == "deepseek" else settings.OLLAMA_REASON_MODEL
-    logger.info(f"  深度推理 /reason -> {reason_svc:8} | 模型: {reason_model}")
-    logger.info(f"  联网搜索 /search -> deepseek | 模型: deepseek-ai/DeepSeek-V3")
-    logger.info("=" * 50)
+# 配置上传目录 - RAG 功能的
+UPLOAD_DIR = Path("uploads")
+UPLOAD_DIR.mkdir(exist_ok=True)
 
+# logger 变量就被初始化为一个日志记录器实例。
+# 之后，便可以在当前文件中直接使用 logger.info()、logger.error() 等方法来记录日志，而不需要进行其他操作。
+logger = get_logger(service="main")
 
-# CORS 中间件配置（生产环境应限制具体域名）
+# 创建 FastAPI 应用实例
+app = FastAPI(title="AssistGen REST API")
+
+# 添加日志中间件， 使用 LoggingMiddleware 来统一处理日志记录，从而替代 FastAPI 的原生打印日志。
+app.add_middleware(LoggingMiddleware)
+
+# CORS设置
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # 在生产环境中要设置具体的域名
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# 1. 用户注册、登录路由通过 api_router 路由挂载到 /api 前缀
+app.include_router(api_router, prefix="/api")
 
 class ReasonRequest(BaseModel):
-    """推理接口请求体"""
     messages: List[Dict[str, str]]
-
 
 class ChatMessage(BaseModel):
-    """聊天接口请求体"""
     messages: List[Dict[str, str]]
 
+class RAGChatRequest(BaseModel):
+    messages: List[Dict[str, str]]
+    index_id: str
 
 @app.post("/chat")
 async def chat_endpoint(request: ChatMessage):
-    """聊天接口 - 流式 SSE 输出，路由由 CHAT_SERVICE 配置决定"""
+    """聊天接口"""
     try:
+        logger.info("Processing chat request")
         chat_service = LLMFactory.create_chat_service()
-
+        
+        log_structured("chat_request", {
+            "message_count": len(request.messages),
+            "last_message": request.messages[-1]["content"][:100] + "..."
+        })
+        
+        # 默认情况下， FastAPI使用JSONResponse返回响应。
+        # 要返回流式响应，请使用StreamingResponse: 将生成器函数传递给StreamingResponse ，然后将其返回。
+        # FastAPI 官方详细文档：https://fastapi.tiangolo.com/advanced/custom-response/#redirectresponse
         return StreamingResponse(
             chat_service.generate_stream(request.messages),
             media_type="text/event-stream"
         )
-
+    
     except Exception as e:
+        logger.error(f"Chat error: {str(e)}", exc_info=True)  # exc_info=True 用于在记录错误时提供详细的错误信息
         raise HTTPException(status_code=500, detail=str(e))
-
 
 @app.post("/reason")
 async def reason_endpoint(request: ReasonRequest):
-    """推理接口 - 流式 SSE 输出，路由由 REASON_SERVICE 配置决定"""
+    """推理接口"""
     try:
+        logger.info("Processing reasoning request")
         reasoner = LLMFactory.create_reasoner_service()
-
+        
+        log_structured("reason_request", {
+            "message_count": len(request.messages),
+            "last_message": request.messages[-1]["content"][:100] + "..."
+        })
+        
         return StreamingResponse(
             reasoner.generate_stream(request.messages),
             media_type="text/event-stream"
         )
-
+    
     except Exception as e:
+        logger.error(f"Reasoning error: {str(e)}", exc_info=True)  # exc_info=True 用于在记录错误时提供详细的错误信息
         raise HTTPException(status_code=500, detail=str(e))
-
 
 @app.post("/search")
 async def search_endpoint(request: ChatMessage):
-    """联网搜索增强聊天接口 - 先搜索后总结，流式 SSE 输出"""
+    """带搜索功能的聊天接口"""
     try:
         search_service = SearchService()
         return StreamingResponse(
             search_service.generate_stream(request.messages[0]["content"]),
             media_type="text/event-stream"
         )
-
+    
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-async def _check_ollama_model(base_url: str, model_name: str, timeout: int = 5) -> dict:
-    """检测 Ollama 服务是否在线，以及指定模型是否已拉取。
-
-    Args:
-        base_url: Ollama 服务地址，如 http://localhost:11434
-        model_name: 要检测的模型名，如 qwen2.5:7b
-        timeout: 请求超时秒数
-
-    Returns:
-        dict with keys: reachable (bool), model_available (bool), error (str|None)
-    """
-    result = {"reachable": False, "model_available": False, "error": None}
+@app.post("/upload")
+async def upload_file(file: UploadFile = File(...)):
+    """上传文件并准备 RAG 处理"""
     try:
-        async with aiohttp.ClientSession() as session:
-            # 第一步：检查 Ollama 服务是否可达
-            async with session.get(f"{base_url}/api/tags", timeout=aiohttp.ClientTimeout(total=timeout)) as resp:
-                if resp.status != 200:
-                    result["error"] = f"Ollama 返回状态码 {resp.status}"
-                    return result
-                data = await resp.json()
+        logger.info(f"Uploading file: {file.filename}")
+        # 生成唯一的文件名
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"{timestamp}_{file.filename}"
+        file_path = UPLOAD_DIR / filename
+        
+        # 确保上传目录存在
+        UPLOAD_DIR.mkdir(exist_ok=True)
+        
+        # 保存文件
+        content = await file.read()
+        with open(file_path, "wb") as f:
+            f.write(content)
+            
+        # 获取文件类型
+        file_type = file.content_type
+        file_ext = Path(file.filename).suffix.lower()
+        
+        # 返回文件信息
+        file_info = {
+            "filename": filename,
+            "original_name": file.filename,
+            "size": len(content),
+            "type": file_type,
+            "path": str(file_path).replace('\\', '/'),  # 使用正斜杠
+        }
+        
+        print(f"文件已保存到: {file_path}")  # 添加日志
+        
 
-            result["reachable"] = True
-
-            # 第二步：检查目标模型是否在模型列表中
-            models = [m.get("name", "") for m in data.get("models", [])]
-            # 模型名可能有 :latest 后缀，做前缀匹配
-            for available in models:
-                if available == model_name or available.startswith(model_name + ":"):
-                    result["model_available"] = True
-                    break
-
-            if not result["model_available"]:
-                result["error"] = f"模型 {model_name} 未找到，可用模型: {models[:5]}{'...' if len(models) > 5 else ''}"
-
-    except asyncio.TimeoutError:
-        result["error"] = f"连接超时 ({timeout}s)"
-    except aiohttp.ClientConnError:
-        result["error"] = "无法连接到 Ollama 服务"
+                # 初始化 RAG 服务
+        rag_service = RAGService()
+        # 初始化 RAG 处理
+        rag_result = await rag_service.process_file(file_info)
+        
+        # 合并结果
+        result = {**file_info, **rag_result}
+        
+        log_structured("file_upload", {
+            "filename": file.filename,
+            "size": len(content),
+            "type": file_type
+        })
+        
+        return result
+        
     except Exception as e:
-        result["error"] = str(e)
+        logger.error(f"Upload failed: {str(e)}", exc_info=True)
+        return {"error": str(e)}
+    
+    return f"data: {result}\n\n"
 
-    return result
+@app.post("/chat-rag")
+async def rag_chat_endpoint(request: RAGChatRequest):
+    """基于文档的问答接口"""
+    try:
+        rag_chat_service = RAGChatService()
+        
+        return StreamingResponse(
+            rag_chat_service.generate_stream(
+                request.messages,
+                request.index_id
+            ),
+            media_type="text/event-stream"
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/health")
 async def health_check():
-    """健康检查 - 返回各接口路由配置，并实时检测本地 Ollama 模型状态"""
-    routing: dict[str, dict] = {}
+    return {"status": "ok"}
 
-    # Chat 路由
-    chat_entry: dict = {
-        "service": settings.CHAT_SERVICE.value,
-        "model": settings.DEEPSEEK_MODEL if settings.CHAT_SERVICE == ServiceType.DEEPSEEK else settings.OLLAMA_CHAT_MODEL,
-    }
-    if settings.CHAT_SERVICE == ServiceType.OLLAMA:
-        chat_entry["ollama_status"] = await _check_ollama_model(
-            settings.OLLAMA_BASE_URL, settings.OLLAMA_CHAT_MODEL
-        )
-    routing["chat"] = chat_entry
-
-    # Reason 路由
-    reason_entry: dict = {
-        "service": settings.REASON_SERVICE.value,
-        "model": settings.DEEPSEEK_MODEL if settings.REASON_SERVICE == ServiceType.DEEPSEEK else settings.OLLAMA_REASON_MODEL,
-    }
-    if settings.REASON_SERVICE == ServiceType.OLLAMA:
-        reason_entry["ollama_status"] = await _check_ollama_model(
-            settings.OLLAMA_BASE_URL, settings.OLLAMA_REASON_MODEL
-        )
-    routing["reason"] = reason_entry
-
-    # Search 路由
-    routing["search"] = {
-        "service": "deepseek",
-        "model": "deepseek-ai/DeepSeek-V3",
-    }
-
-    return {"status": "ok", "routing": routing}
-
-
-# 挂载前端静态文件 SPA
-app.mount("/", StaticFiles(directory="static/dist", html=True), name="static")
+# 最后挂载静态文件，并确保使用绝对路径
+STATIC_DIR = Path(__file__).parent / "static" / "dist"
+app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")

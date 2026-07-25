@@ -1,9 +1,3 @@
-"""
-DeepSeek 非流式对话测试脚本。
-
-验证 DeepSeek API 的同步（stream=False）聊天能力，一次性返回完整回复。
-"""
-
 from openai import OpenAI
 import os
 from dotenv import load_dotenv
@@ -13,10 +7,10 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 root_dir = os.path.dirname(os.path.dirname(current_dir))
 env_path = os.path.join(root_dir, 'llm_backend', '.env')
 
+# 加载 .env 文件
 load_dotenv(env_path)
 
 def sync_chat():
-    """测试 DeepSeek 非流式聊天：一次性获取完整回复"""
     try:
         client = OpenAI(
             api_key=os.getenv('DEEPSEEK_API_KEY'),
