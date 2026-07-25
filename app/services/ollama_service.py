@@ -28,7 +28,7 @@ class OllamaService:
                     f"{self.base_url}/api/chat",
                      json={
                         "model": self.chat_model,
-                        "messages": messages,
+                        "messages": messages,  # 用户传来的问题
                         "stream": True,
                         "keep_alive": -1,  # 保持连接
                         "options": {

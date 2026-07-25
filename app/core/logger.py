@@ -46,6 +46,7 @@ logger.add(
     encoding="utf-8"
 )
 
+# service 区分每个请求类型，是模型还是FAST API
 def get_logger(service: str):
     """获取带有服务名称的 logger"""
     return logger.bind(service=service)

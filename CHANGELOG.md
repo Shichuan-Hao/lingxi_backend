@@ -33,8 +33,6 @@
 - `SearchService`：异步搜索 + 异常兜底 + 中文 JSON 正常输出
 - `RAGService` / `RAGChatService`：适配新版异步 EmbeddingService
 
-### 前端
-- 页面标题及界面中 "AssistGen" 全部替换为"灵犀"
 
 ### DevOps
 - 配置 HuggingFace 国内镜像 (`HF_ENDPOINT`) 加速模型下载

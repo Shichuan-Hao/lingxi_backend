@@ -128,6 +128,7 @@ async def chat_endpoint(request: ChatMessage):
         last_msg = request.messages[-1]["content"] if request.messages else ""
         logger.info(f"\U0001f4ac Chat | {service_info} | 请求: {last_msg[:80]}{'...' if len(last_msg) > 80 else ''}")
 
+        logger.info("Processing chat request")
         chat_service = LLMFactory.create_chat_service()
         return StreamingResponse(
             logged_stream(chat_service.generate_stream(request.messages), logger, "Chat响应"),
@@ -245,7 +246,6 @@ async def rag_chat_endpoint(request: RAGChatRequest):
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
 
 @app.get("/health")
 async def health_check():
