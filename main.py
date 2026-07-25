@@ -88,7 +88,10 @@ async def startup_event():
     if _is_hot_reload():
         logger.info("\U0001f504 服务更新成功！")
     else:
-        logger.info("\u2705 服务启动成功！访问: http://localhost:8000")
+        logger.info("\u2705 服务启动成功！")
+        logger.info("   \U0001f310  前端页面   http://localhost:8000/")
+        logger.info("   \U0001f4d6  API 文档   http://localhost:8000/docs")
+        logger.info("   \U0001f3e5  健康检查   http://localhost:8000/health")
         try:
             STARTUP_MARKER.write_text(str(os.getppid()), encoding="utf-8")
         except Exception:

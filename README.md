@@ -1,197 +1,263 @@
-# 灵犀（ling_xi）
+# 灵犀（LingXi）
 
-一个基于 Deepseek V3 & R1 构建的 Agent 对话式应用服务
+基于 DeepSeek V3/R1 与 Ollama 的 Agent 对话式应用服务，支持文档上传、RAG 问答与联网搜索。
 
 ## 项目概览
 
 ### 技术栈
 
-| 类别         | 技术                          |
-| ------------ | ----------------------------- |
-| Web 框架     | FastAPI + Uvicorn             |
-| AI 模型      | DeepSeek V3/R1 (云端) + Ollama (本地) |
-| 搜索增强     | SerpAPI (Google 搜索)         |
-| 数据库       | SQLAlchemy + Redis + MySQL    |
-| 图数据库     | Neo4j                         |
-| 知识图谱     | GraphRAG                      |
-| 向量检索     | FAISS + sentence_transformers |
-| Agent 框架   | LangGraph                     |
+| 类别        | 技术                                        |
+| ----------- | ------------------------------------------- |
+| Web 框架    | FastAPI + Uvicorn                           |
+| AI 模型     | DeepSeek V3/R1 (云端) + Ollama (本地)        |
+| 流式输出    | SSE (Server-Sent Events)                    |
+| 搜索增强    | SerpAPI (Google 搜索)                       |
+| RAG / 向量  | FAISS + sentence-transformers               |
+| 文档解析    | PyPDF2 + python-docx                        |
+| 数据库      | SQLAlchemy (async) + MySQL + Redis          |
+| 图数据库    | Neo4j (GraphRAG)                            |
+| Agent 框架  | LangGraph                                   |
+| 日志        | Loguru                                      |
 
 ### 项目结构
 
 ```
 lingxi_backend/
 ├── main.py                         # FastAPI 入口，路由注册
+├── run.py                          # 一键启动脚本
 ├── app/
-│   ├── api/v1/chat.py              # API 版本化路由（规划中）
-│   ├── core/config.py              # 配置管理 (pydantic-settings)
-│   ├── models/chat.py              # 数据模型
+│   ├── api/
+│   │   └── auth.py                 # 用户认证路由 (注册/登录)
+│   ├── core/
+│   │   ├── config.py               # 配置管理 (pydantic-settings)
+│   │   ├── database.py             # 数据库连接 (MySQL + Redis)
+│   │   ├── security.py             # JWT 鉴权
+│   │   ├── hashing.py              # 密码哈希
+│   │   ├── logger.py               # 日志系统
+│   │   └── middleware.py           # HTTP 请求日志中间件
+│   ├── models/
+│   │   ├── user.py                 # 用户模型
+│   │   ├── conversation.py         # 会话模型
+│   │   └── message.py              # 消息模型
+│   ├── schemas/                    # Pydantic 数据校验
 │   ├── services/
 │   │   ├── llm_factory.py          # LLM 工厂，动态切换 DeepSeek/Ollama
-│   │   ├── deepseek_service.py     # DeepSeek API 服务（流式/非流式）
+│   │   ├── deepseek_service.py     # DeepSeek API 服务（流式）
 │   │   ├── ollama_service.py       # Ollama 本地模型服务
-│   │   └── search_service.py       # 联网搜索增强聊天服务
-│   ├── tools/search.py             # SerpAPI 搜索工具
-│   └── test/                       # 测试脚本
+│   │   ├── search_service.py       # 联网搜索增强服务
+│   │   ├── embedding_service.py    # 文本向量化 (异步)
+│   │   ├── rag_service.py          # RAG 文件处理与索引
+│   │   ├── rag_chat_service.py     # RAG 文档问答
+│   │   └── user_service.py         # 用户业务逻辑
+│   └── tools/
+│       └── search.py               # SerpAPI 搜索工具
+├── static/dist/                    # 前端构建产物
+├── uploads/                        # 上传文件目录
 ├── docs/                           # Jupyter Notebook 教程
-└── requirements.txt
+├── requirements.txt
+└── CHANGELOG.md
 ```
 
 ### 核心 API
 
-| 接口     | 方法 | 说明                              |
-| -------- | ---- | --------------------------------- |
-| `/chat`  | POST | 通用聊天，流式 SSE 输出，可选 DeepSeek/Ollama |
-| `/reason`| POST | 推理接口，默认使用 Ollama 推理模型 |
-| `/search`| POST | 联网搜索增强，先搜索后总结回答    |
-| `/health`| GET  | 健康检查 + 当前路由配置（显示各接口走的是 Ollama 还是 API） |
+| 接口        | 方法 | 说明                                     |
+| ----------- | ---- | ---------------------------------------- |
+| `/chat`     | POST | 普通对话，流式 SSE 输出，可切换 DeepSeek/Ollama |
+| `/reason`   | POST | 深度推理，默认 Ollama 推理模型             |
+| `/search`   | POST | 联网搜索增强，先搜索后总结回答             |
+| `/upload`   | POST | 文件上传，支持 PDF/Word/TXT/Markdown       |
+| `/chat-rag` | POST | 基于已上传文档的问答                       |
+| `/api/register` | POST | 用户注册                               |
+| `/api/token`    | POST | 用户登录，返回 JWT Token               |
+| `/api/users/me` | GET  | 获取当前用户信息                       |
+| `/health`   | GET  | 健康检查                                 |
 
 ### 架构设计
 
-- **工厂模式**：`LLMFactory` 根据 `.env` 中的 `CHAT_SERVICE` / `REASON_SERVICE` 配置动态选择 DeepSeek 云服务或 Ollama 本地模型
-- **流式输出**：所有聊天接口均使用 SSE (Server-Sent Events) 实现流式响应
-- **Function Calling**：`SearchService` 利用 DeepSeek 的 tool call 能力，自动调用 SerpAPI 进行联网搜索，再将结果喂给模型生成回答
+- **工厂模式**：`LLMFactory` 根据 `.env` 中的 `CHAT_SERVICE` 配置动态选择 DeepSeek 云端 API 或 Ollama 本地模型
+- **流式输出**：所有对话接口均使用 SSE 实现流式响应，并自动记录响应摘要
+- **RAG 管道**：`/upload` 上传文件 → 异步文本提取与向量化 → FAISS 索引 → `/chat-rag` 文档问答
+- **异步安全**：`EmbeddingService` 和 `SearchService` 均使用 `asyncio.to_thread` 包裹阻塞操作，避免卡死事件循环
+- **日志系统**：基于 Loguru 的结构化日志，按路由区分（💬🧠🔍📁），自动展示本地/云端模型信息，流式响应结束后输出摘要
 
 ## 环境要求
 
 - Python 3.11+
-- Ollama (可选，如果需要使用本地模型)
+- MySQL 8.0+
+- Redis (可选，用于会话缓存)
+- Ollama (可选，如需使用本地模型)
 
-## 安装步骤
+## 快速开始
 
-### 第1步： 创建并激活虚拟环境
+### 1. 创建虚拟环境
 
-### 方式一：使用 Python venv（轻量，推荐纯 Python 项目）
+**方式一：Python venv（轻量）**
 
 ```bash
+# Windows
 python -m venv .venv
-
-# Windows（需确保 python3.11 在 PATH 环境变量中）
-python -m venv --python python3.11 .venv
-
-# Linux/Mac（同上）
-python -m venv --python python3.11 .venv
-
-# 如果是Windows操作系统
-
-# 更改执行策略：
 Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
-
-# 激活虚拟环境
 .venv\Scripts\activate
 
-# 如果是 Linux/Mac 操作系统
+# Linux / Mac
+python -m venv .venv
 source .venv/bin/activate
 ```
 
-### 方式二：使用 Conda（推荐数据科学/LLM 项目，跨平台命令统一）
+**方式二：Conda（推荐）**
 
 ```bash
-# 创建 Conda 环境（指定 Python 3.11，环境名称自定，如 ling_xi）
-conda create -n ling_xi python=3.11 -y
-
-# 激活环境（Windows / Linux / Mac 通用命令）
-conda activate ling_xi
-
-# （可选）如果你偏好将环境建在项目本地 .venv 目录
-# conda create --prefix ./.venv python=3.11 -y
-# conda activate ./.venv
-conda deactivate
+conda create -n lingxi python=3.11 -y
+conda activate lingxi
 ```
-<hr/>
 
-说明：两种方式任选其一即可。venv 更轻量，适合纯 Python 项目；conda 更强大，能管理
-非 Python 依赖（如 CUDA、C++ 库），且激活命令跨平台一致。如果使用 Conda 时 Windows 提示权限错误，
-请执行 conda init powershell 并重启终端，无需修改系统执行策略。
+### 2. 安装依赖
 
-
-2. 安装依赖
 ```bash
-pip install -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple/
-
+pip install -r requirements.txt
+# 使用国内镜像加速（可选）
 pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 ```
 
-4. 创建配置文件
+### 3. 配置环境变量
+
 ```bash
-# 复制示例配置文件，注意， .env 文件需要放在 llm_backend 目录下
 cp .env.example .env
 ```
 
-## 配置说明
-
-创建 `.env` 文件并配置以下内容：
+编辑 `.env` 文件：
 
 ```env
-# Deepseek settings
+# DeepSeek 云端 API
 DEEPSEEK_API_KEY=your-api-key
 DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
 DEEPSEEK_MODEL=deepseek-chat
 
-# Ollama settings
+# Ollama 本地模型
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_CHAT_MODEL=qwen2.5:1.5b
 OLLAMA_REASON_MODEL=deepseek-r1:32b
 
-# Service selection (deepseek or ollama)
+# 服务选择 (deepseek 或 ollama)
 CHAT_SERVICE=deepseek
 REASON_SERVICE=ollama
 
-# SerpAPI 配置 (搜索增强) , 本期代码没有使用，可以忽略，会在第四期项目中介绍联网检索功能，但需要写上该配置
+# SerpAPI 搜索
 SERPAPI_KEY=your-serpapi-key
+SEARCH_RESULT_COUNT=3
+
+# HuggingFace 镜像 (国内加速模型下载)
+HF_ENDPOINT=https://hf-mirror.com
+
+# 数据库
+DB_HOST=localhost
+DB_PORT=3306
+DB_USER=root
+DB_PASSWORD=your-password
+DB_NAME=lingxi
+
+# JWT
+SECRET_KEY=your-secret-key
+ACCESS_TOKEN_EXPIRE_MINUTES=30
 ```
 
-配置说明：
-- `DEEPSEEK_API_KEY`: Deepseek API 密钥
-- `DEEPSEEK_BASE_URL`: Deepseek API 地址
-- `DEEPSEEK_MODEL`: Deepseek 模型名称（如 `deepseek-chat`）
-- `OLLAMA_BASE_URL`: Ollama 服务地址
-- `OLLAMA_CHAT_MODEL`: Ollama 聊天模型名称
-- `OLLAMA_REASON_MODEL`: Ollama 推理模型名称
-- `CHAT_SERVICE`: 聊天服务类型 (deepseek 或 ollama)
-- `REASON_SERVICE`: 推理服务类型 (deepseek 或 ollama)
+### 4. 启动服务
 
-## 启动服务
+**开发模式**（支持热加载，代码修改自动生效）
 
 ```bash
-cd llm_backend
-# 开发模式
-uvicorn main:app --reload --port 8000
-
-# 生产模式
-uvicorn main:app --host 0.0.0.0 --port 8000
+python run.py
 ```
 
-服务启动后访问：
-- 前端页面：http://localhost:8000/
-- API 文档：http://localhost:8000/docs
-- 健康检查：http://localhost:8000/health
+**生产模式**（关闭热加载）
 
+```bash
+# 单 Worker
+python run.py --prod
+
+# 多 Worker
+python run.py --prod -w 4
+```
+
+> 多 Worker 模式下 `/upload` 和 `/chat-rag` 等依赖内存中 FAISS 索引的功能需额外处理共享状态，建议使用单 Worker + Nginx 反向代理实现并发。
+
+启动成功后将显示路由表与模型配置：
+
+```
+──────────────────────────────────────────────────
+  🌐  灵犀 · 智能助手   🌐
+──────────────────────────────────────────────────
+  📦  服务配置:
+    💬   /chat       普通对话  → 云端 Deepseek(deepseek-chat)
+    🧠   /reason     深度推理  → 本地 Ollama(deepseek-r1:32b)
+    🔍   /search     联网搜索  → 云端 Deepseek(deepseek-chat)
+  ──────────────────────────────────────────
+    📁   /upload     文件上传(RAG)
+    📖   /chat-rag   文档问答
+    🔑   /api/register  用户注册
+    🚪   /api/token     用户登录
+    👤   /api/users/me  用户信息
+    🏥   /health        健康检查
+──────────────────────────────────────────────────
+```
+
+### 5. 访问
+
+| 页面/功能    | 地址                         |
+| ------------ | ---------------------------- |
+| 前端页面     | http://localhost:8000/       |
+| API 文档     | http://localhost:8000/docs   |
+| 健康检查     | http://localhost:8000/health |
+
+## 功能介绍
+
+### 智能对话
+
+- **普通对话** (`/chat`)：通用聊天，支持 DeepSeek 云端或 Ollama 本地模型，通过 `CHAT_SERVICE` 环境变量切换
+- **深度推理** (`/reason`)：适合复杂逻辑推理问题，默认配置为 Ollama 推理模型
+- **联网搜索** (`/search`)：自动调用 SerpAPI 搜索并整合结果回答，适合事实性问题
+
+### 文档问答 (RAG)
+
+1. **上传文档** (`/upload`)：支持 PDF、Word (.docx)、TXT、Markdown 格式，自动提取文本、分块、向量化并建立 FAISS 索引
+2. **文档问答** (`/chat-rag`)：基于已上传文档的索引 ID 进行检索增强问答
+
+### 用户认证
+
+- 用户注册与登录，JWT Token 鉴权
+- 加密密码存储 (bcrypt)
 
 ## 前端项目
 
-本项目配套的前端实现请参考：[My-DeepSeek-Web](https://github.com/MuYuCheney/My-DeepSeek-Web)
+本项目已内置前端页面（`static/dist/`），开箱即用。
 
-前端项目提供了完整的用户界面，支持：
-- 智能对话
-- Markdown 渲染
-- 代码高亮
-- 流式输出
-- 聊天记录
+如需独立开发前端，可参考配套项目：[My-DeepSeek-Web](https://github.com/MuYuCheney/My-DeepSeek-Web)，支持：
+- 智能对话、Markdown 渲染、代码高亮
+- 流式输出、聊天记录管理
+- 文件上传与文档问答
+
+## v1.1 更新要点
+
+详见 [CHANGELOG.md](CHANGELOG.md)
+
+- 修复上传卡死、搜索乱码等关键 Bug
+- 日志系统全面优化（emoji 标识、路由区分、流式摘要）
+- EmbeddingService / SearchService 异步重构
+- HuggingFace 国内镜像加速
+- 首次启动与热加载状态区分
+- 前端 "AssistGen" → "灵犀"
 
 ## 注意事项
 
-1. `.env` 文件包含敏感信息，已添加到 `.gitignore`，不会上传到代码仓库
-2. `.venv` 虚拟环境目录也已添加到 `.gitignore`
-3. 使用 Ollama 时需要确保 Ollama 服务已启动且可访问
-4. 建议在生产环境中配置 CORS 和安全设置
+1. `.env` 包含敏感信息，已加入 `.gitignore`，不会提交到仓库
+2. 使用本地 Ollama 模型前，需先启动 Ollama 服务并拉取模型：
+   ```bash
+   ollama pull qwen2.5:1.5b
+   ollama pull deepseek-r1:32b
+   ```
+3. 生产环境请修改 CORS 配置和安全 Secret Key
+4. `HuggingFace` 模型下载（sentence-transformers）在国内可能较慢，已默认配置 `HF_ENDPOINT` 镜像
 
 ## License
 
-MIT 
-
-
-```
-ollama pull qwen2.5:1.5b
-ollama pull deepseek-r1:7b
-```
+MIT

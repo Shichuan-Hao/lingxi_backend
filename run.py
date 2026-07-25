@@ -2,9 +2,11 @@
 """灵犀服务启动脚本 - v1.1
 
 用法:
-    python run.py              # 推荐方式
-    chmod +x run.py && ./run.py  # 执行权限后直接运行
+    python run.py              # 开发模式（热加载）
+    python run.py --prod       # 生产模式（无热加载）
+    python run.py --prod -w 4  # 生产模式（4 worker）
 """
+import argparse
 import uvicorn
 from app.core.logger import get_logger
 import os
@@ -15,6 +17,15 @@ logger = get_logger(service="server")
 
 def start_server():
     """启动 FastAPI 服务，自动检测 .env 配置并初始化日志。"""
+    # 解析命令行参数
+    parser = argparse.ArgumentParser(description="灵犀服务启动脚本")
+    parser.add_argument("--prod", action="store_true", help="生产模式（关闭热加载）")
+    parser.add_argument("-w", "--workers", type=int, default=1, help="Worker 进程数（仅生产模式）")
+    args = parser.parse_args()
+
+    is_prod = args.prod
+    workers = args.workers if is_prod else 1
+
     # 确保工作目录为项目根目录
     os.chdir(Path(__file__).parent)
 
@@ -34,8 +45,12 @@ def start_server():
     )
     search_info = f"云端 Deepseek({settings.DEEPSEEK_MODEL})"
 
+    mode_tag = "\U0001f3ed  生产模式" if is_prod else "\U0001f527  开发模式（热加载）"
+    if is_prod and workers > 1:
+        mode_tag += f" | {workers} workers"
+
     logger.info("\u2501" * 50)
-    logger.info("  \U0001f300  灵犀 \u00b7 智能助手   \U0001f300")
+    logger.info(f"  \U0001f300  灵犀 \u00b7 智能助手   {mode_tag}")
     logger.info("\u2501" * 50)
     logger.info("  \U0001f4e6  服务配置:")
     logger.info(f"    \U0001f4ac  /chat       普通对话  \u2192 {chat_info}")
@@ -49,6 +64,11 @@ def start_server():
     logger.info("    \U0001f464  /api/users/me  用户信息")
     logger.info("    \U0001f3e5  /health        健康检查")
     logger.info("\u2501" * 50)
+    logger.info("  \U0001f310  访问地址:")
+    logger.info("    \U0001f3e0  前端页面   http://localhost:8000/")
+    logger.info("    \U0001f4d6  API 文档   http://localhost:8000/docs")
+    logger.info("    \U0001f3e5  健康检查   http://localhost:8000/health")
+    logger.info("\u2501" * 50)
 
     uvicorn.run(
         "main:app",
@@ -56,7 +76,8 @@ def start_server():
         port=8000,
         access_log=False,
         log_level="error",
-        reload=True,
+        reload=not is_prod,
+        workers=workers,
     )
 
 
