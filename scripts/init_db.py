@@ -1,3 +1,10 @@
+"""
+数据库初始化脚本。
+
+创建所有 SQLAlchemy 模型对应的数据库表。
+运行方式：python scripts/init_db.py
+注意：会先删除已有表再重新创建（生产环境慎用）。
+"""
 import sys
 from pathlib import Path
 

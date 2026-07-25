@@ -1,3 +1,9 @@
+"""
+用户认证 API 路由。
+
+提供用户注册（/api/register）、登录获取 Token（/api/token）、
+获取当前用户信息（/api/users/me）三个端点。
+"""
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.ext.asyncio import AsyncSession

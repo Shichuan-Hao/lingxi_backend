@@ -1,3 +1,9 @@
+"""
+应用配置管理。
+
+通过 .env 文件和 pydantic-settings 加载所有环境变量，
+包括服务端配置、模型选择、数据库、JWT 密钥等。
+"""
 from pydantic_settings import BaseSettings
 from enum import Enum
 from pathlib import Path
@@ -28,6 +34,9 @@ class Settings(BaseSettings):
     # Search settings
     SERPAPI_KEY: str
     SEARCH_RESULT_COUNT: int = 3
+    
+    # HuggingFace mirror for China (faster model download)
+    HF_ENDPOINT: str = "https://hf-mirror.com"
     
     # Database settings
     DB_HOST: str

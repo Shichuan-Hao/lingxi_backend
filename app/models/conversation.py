@@ -1,3 +1,9 @@
+"""
+会话数据库模型。
+
+SQLAlchemy ORM 模型，记录用户与 AI 的对话会话，
+包含会话类型、标题、状态等字段。
+"""
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, func, Enum
 from sqlalchemy.orm import relationship
 from app.core.database import Base

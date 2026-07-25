@@ -1,3 +1,9 @@
+"""
+用户服务模块。
+
+处理用户注册（创建用户）、用户认证（密码验证）、
+用户信息查询等数据库操作。
+"""
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, or_
 from app.models.user import User

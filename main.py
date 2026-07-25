@@ -1,8 +1,22 @@
+"""
+灵犀 FastAPI 应用主入口。
+
+定义所有 API 路由和静态文件挂载，包括：
+- /chat      普通对话
+- /reason    深度推理
+- /search    联网搜索
+- /upload    文件上传(RAG)
+- /chat-rag  文档问答
+- /api/*     用户认证
+- /health    健康检查
+"""
+import json as _json
+import os
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from typing import List, Dict
+from typing import List, Dict, AsyncGenerator
 from app.services.llm_factory import LLMFactory
 from app.services.search_service import SearchService
 
@@ -11,7 +25,7 @@ from datetime import datetime
 from pathlib import Path
 from app.services.rag_service import RAGService
 from app.services.rag_chat_service import RAGChatService
-from app.core.logger import get_logger, log_structured
+from app.core.logger import get_logger
 from app.core.middleware import LoggingMiddleware
 from app.core.config import settings
 from app.api import api_router
@@ -26,7 +40,7 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 logger = get_logger(service="main")
 
 # 创建 FastAPI 应用实例
-app = FastAPI(title="AssistGen REST API")
+app = FastAPI(title="灵犀 REST API")
 
 # 添加日志中间件， 使用 LoggingMiddleware 来统一处理日志记录，从而替代 FastAPI 的原生打印日志。
 app.add_middleware(LoggingMiddleware)
@@ -53,61 +67,115 @@ class RAGChatRequest(BaseModel):
     messages: List[Dict[str, str]]
     index_id: str
 
+# 用于区分首次启动与 uvicorn 热加载：通过父进程 PID 判断是否为同一轮运行
+# uvicorn 热加载时父进程（reload supervisor）保持不变，仅工作进程被替换
+STARTUP_MARKER = Path(__file__).parent / ".lingxi_startup_marker"
+
+
+def _is_hot_reload() -> bool:
+    """若标记文件存在且记录的父进程 PID 与当前一致，则判定为热加载。"""
+    if not STARTUP_MARKER.exists():
+        return False
+    try:
+        stored_ppid = int(STARTUP_MARKER.read_text(encoding="utf-8").strip())
+        return stored_ppid == os.getppid()
+    except Exception:
+        return False
+
+
+@app.on_event("startup")
+async def startup_event():
+    if _is_hot_reload():
+        logger.info("\U0001f504 服务更新成功！")
+    else:
+        logger.info("\u2705 服务启动成功！访问: http://localhost:8000")
+        try:
+            STARTUP_MARKER.write_text(str(os.getppid()), encoding="utf-8")
+        except Exception:
+            pass
+
+
+# ---------- 辅助函数 ----------
+async def logged_stream(generator: AsyncGenerator[str, None], logger, label: str = ""):
+    """包装流式生成器，完成后记录响应摘要"""
+    parts = []
+    async for chunk in generator:
+        if chunk.startswith("data: ") and len(chunk) > 6:
+            try:
+                text = _json.loads(chunk[6:].strip())
+                if isinstance(text, str):
+                    parts.append(text)
+            except Exception:
+                pass
+        yield chunk
+    if parts:
+        summary = "".join(parts)[:200]
+        if label:
+            logger.info(f"\U0001f4e4 {label}: {summary}{'...' if len(summary) >= 200 else ''}")
+
+
+# ---------- API 路由 ----------
 @app.post("/chat")
 async def chat_endpoint(request: ChatMessage):
     """聊天接口"""
     try:
-        logger.info("Processing chat request")
+        # 确定使用的服务和模型
+        if settings.CHAT_SERVICE == "deepseek":
+            service_info = f"云端API({settings.DEEPSEEK_MODEL})"
+        else:
+            service_info = f"本地Ollama({settings.OLLAMA_CHAT_MODEL})"
+
+        last_msg = request.messages[-1]["content"] if request.messages else ""
+        logger.info(f"\U0001f4ac Chat | {service_info} | 请求: {last_msg[:80]}{'...' if len(last_msg) > 80 else ''}")
+
         chat_service = LLMFactory.create_chat_service()
-        
-        log_structured("chat_request", {
-            "message_count": len(request.messages),
-            "last_message": request.messages[-1]["content"][:100] + "..."
-        })
-        
-        # 默认情况下， FastAPI使用JSONResponse返回响应。
-        # 要返回流式响应，请使用StreamingResponse: 将生成器函数传递给StreamingResponse ，然后将其返回。
-        # FastAPI 官方详细文档：https://fastapi.tiangolo.com/advanced/custom-response/#redirectresponse
         return StreamingResponse(
-            chat_service.generate_stream(request.messages),
+            logged_stream(chat_service.generate_stream(request.messages), logger, "Chat响应"),
             media_type="text/event-stream"
         )
-    
+
     except Exception as e:
-        logger.error(f"Chat error: {str(e)}", exc_info=True)  # exc_info=True 用于在记录错误时提供详细的错误信息
+        logger.error(f"\u274c Chat 失败: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.post("/reason")
 async def reason_endpoint(request: ReasonRequest):
     """推理接口"""
     try:
-        logger.info("Processing reasoning request")
+        if settings.REASON_SERVICE == "deepseek":
+            service_info = f"云端API({settings.DEEPSEEK_MODEL})"
+        else:
+            service_info = f"本地Ollama({settings.OLLAMA_REASON_MODEL})"
+
+        last_msg = request.messages[-1]["content"] if request.messages else ""
+        logger.info(f"\U0001f9e0 Reason | {service_info} | 请求: {last_msg[:80]}{'...' if len(last_msg) > 80 else ''}")
+
         reasoner = LLMFactory.create_reasoner_service()
-        
-        log_structured("reason_request", {
-            "message_count": len(request.messages),
-            "last_message": request.messages[-1]["content"][:100] + "..."
-        })
-        
         return StreamingResponse(
-            reasoner.generate_stream(request.messages),
+            logged_stream(reasoner.generate_stream(request.messages), logger, "Reason响应"),
             media_type="text/event-stream"
         )
-    
+
     except Exception as e:
-        logger.error(f"Reasoning error: {str(e)}", exc_info=True)  # exc_info=True 用于在记录错误时提供详细的错误信息
+        logger.error(f"\u274c Reason 失败: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.post("/search")
 async def search_endpoint(request: ChatMessage):
     """带搜索功能的聊天接口"""
     try:
+        service_info = f"云端API({settings.DEEPSEEK_MODEL})"
+        query = request.messages[-1]["content"] if request.messages else ""
+        logger.info(f"\U0001f50d Search | {service_info} | 请求: {query[:80]}{'...' if len(query) > 80 else ''}")
+
         search_service = SearchService()
         return StreamingResponse(
-            search_service.generate_stream(request.messages[0]["content"]),
+            logged_stream(search_service.generate_stream(query), logger, "Search响应"),
             media_type="text/event-stream"
         )
-    
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -116,7 +184,6 @@ async def search_endpoint(request: ChatMessage):
 async def upload_file(file: UploadFile = File(...)):
     """上传文件并准备 RAG 处理"""
     try:
-        logger.info(f"Uploading file: {file.filename}")
         # 生成唯一的文件名
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"{timestamp}_{file.filename}"
@@ -132,7 +199,8 @@ async def upload_file(file: UploadFile = File(...)):
             
         # 获取文件类型
         file_type = file.content_type
-        file_ext = Path(file.filename).suffix.lower()
+        
+        logger.info(f"\U0001f4c1 Upload | 已保存: {file.filename} ({len(content)} bytes)")
         
         # 返回文件信息
         file_info = {
@@ -140,33 +208,27 @@ async def upload_file(file: UploadFile = File(...)):
             "original_name": file.filename,
             "size": len(content),
             "type": file_type,
-            "path": str(file_path).replace('\\', '/'),  # 使用正斜杠
+            "path": str(file_path).replace('\\', '/'),
         }
         
-        print(f"文件已保存到: {file_path}")  # 添加日志
-        
-
-                # 初始化 RAG 服务
+        # 初始化 RAG 服务
         rag_service = RAGService()
         # 初始化 RAG 处理
         rag_result = await rag_service.process_file(file_info)
         
+        if rag_result.get("status") == "error":
+            logger.error(f"\u274c Upload | RAG 处理失败: {rag_result.get('error')}")
+            raise HTTPException(status_code=500, detail=rag_result.get("error"))
+        
+        logger.info(f"\u2705 Upload | 索引创建成功: {rag_result.get('index_id')}, 分块数: {rag_result.get('chunks')}")
+        
         # 合并结果
         result = {**file_info, **rag_result}
-        
-        log_structured("file_upload", {
-            "filename": file.filename,
-            "size": len(content),
-            "type": file_type
-        })
-        
         return result
         
     except Exception as e:
-        logger.error(f"Upload failed: {str(e)}", exc_info=True)
-        return {"error": str(e)}
-    
-    return f"data: {result}\n\n"
+        logger.error(f"\u274c Upload 失败: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/chat-rag")
 async def rag_chat_endpoint(request: RAGChatRequest):

@@ -1,3 +1,9 @@
+"""
+LLM 服务工厂。
+
+根据 .env 配置（CHAT_SERVICE / REASON_SERVICE）自动选择
+本地 Ollama 或云端 Deepseek 模型，统一实例化接口。
+"""
 from typing import Union
 from app.core.config import settings, ServiceType
 from app.services.deepseek_service import DeepseekService
@@ -12,7 +18,7 @@ class LLMFactory:
             return DeepseekService()
         else:
             # 否则使用OllamaService
-            return OllamaService(model=settings.OLLAMA_CHAT_MODEL)
+            return OllamaService()
 
     @staticmethod
     def create_reasoner_service():
@@ -22,4 +28,4 @@ class LLMFactory:
             return DeepseekService()
         else:
             # 否则使用OllamaService
-            return OllamaService(model=settings.OLLAMA_REASON_MODEL)
+            return OllamaService()

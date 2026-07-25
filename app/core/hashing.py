@@ -1,3 +1,8 @@
+"""
+密码哈希工具。
+
+提供 bcrypt 密码哈希和验证函数，用于用户注册与登录。
+"""
 import bcrypt
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:

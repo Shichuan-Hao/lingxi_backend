@@ -1,3 +1,9 @@
+"""
+RAG 文档处理服务。
+
+接收上传的文件，调用 EmbeddingService 创建向量索引，
+管理从文件上传到索引创建的完整流程。
+"""
 from typing import Dict, List, Optional
 from pathlib import Path
 import asyncio

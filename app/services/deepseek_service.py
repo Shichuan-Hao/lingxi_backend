@@ -1,3 +1,9 @@
+"""
+Deepseek API 对话服务。
+
+通过 OpenAI 兼容接口调用 Deepseek 云端大模型，
+支持流式和非流式文本生成，用于 /chat 和 /reason 端点。
+"""
 from typing import List, Dict, AsyncGenerator
 from openai import AsyncOpenAI
 from app.core.config import settings
@@ -8,7 +14,6 @@ logger = get_logger(service="deepseek")
 
 class DeepseekService:
     def __init__(self, model: str = "deepseek-chat"):
-        logger.info("Initializing Deepseek Service")
         self.client = AsyncOpenAI(
             api_key=settings.DEEPSEEK_API_KEY,
             base_url=settings.DEEPSEEK_BASE_URL
@@ -19,7 +24,6 @@ class DeepseekService:
     async def generate_stream(self, messages: List[Dict]) -> AsyncGenerator[str, None]:
         """流式生成回复"""
         try:
-            logger.info(f"Generating response for messages with model: {self.model}")
             response = await self.client.chat.completions.create(
                 model=self.model,
                 messages=messages,

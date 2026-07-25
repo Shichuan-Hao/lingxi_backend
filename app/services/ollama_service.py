@@ -1,3 +1,9 @@
+"""
+Ollama 本地对话服务。
+
+通过 aiohttp 调用本地 Ollama API 进行流式文本生成，
+支持 chat 和 reason 两种模型切换，用于 /chat 和 /reason 端点。
+"""
 from typing import List, Dict, AsyncGenerator
 import aiohttp
 import json
@@ -8,17 +14,14 @@ logger = get_logger(service="ollama")
 
 class OllamaService:
     def __init__(self):
-        logger.info("Initializing Ollama Service")
         self.base_url = settings.OLLAMA_BASE_URL
         self.chat_model = settings.OLLAMA_CHAT_MODEL
         self.reason_model = settings.OLLAMA_REASON_MODEL
 
     async def generate_stream(self, messages: List[Dict], model: str = "deepseek-r1:32b") -> AsyncGenerator[str, None]:
         try:
-
             # 优先使用配置中的 OLLAMA_CHAT_MODEL，其次使用传入的 model
             model = self.chat_model or model
-            logger.info(f"Generating response with model: {model}")
             
             async with aiohttp.ClientSession() as session:
                 async with session.post(

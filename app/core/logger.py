@@ -1,3 +1,9 @@
+"""
+结构化日志系统。
+
+基于 loguru 提供按服务分类的日志记录，支持日志文件轮转、
+控制台彩色输出、结构化 JSON 日志等功能。
+"""
 from loguru import logger
 import sys
 from pathlib import Path

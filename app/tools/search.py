@@ -1,3 +1,9 @@
+"""
+SerpAPI 搜索工具。
+
+封装 SerpAPI 搜索接口，提供 Google 搜索功能，
+返回搜索结果（标题、摘要、URL），供 SearchService 调用。
+"""
 import requests
 from typing import List, Dict
 from app.core.config import settings
