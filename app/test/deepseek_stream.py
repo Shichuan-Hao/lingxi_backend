@@ -1,3 +1,9 @@
+"""
+DeepSeek 流式对话测试脚本。
+
+验证 DeepSeek API 的流式（stream=True）聊天能力，逐字打印模型回复。
+"""
+
 from openai import OpenAI
 import os
 from dotenv import load_dotenv
@@ -8,10 +14,10 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 root_dir = os.path.dirname(os.path.dirname(current_dir))
 env_path = os.path.join(root_dir, 'llm_backend', '.env')
 
-# 加载 .env 文件
 load_dotenv(env_path)
 
 def stream_chat():
+    """测试 DeepSeek 流式聊天：实时打印每个 token"""
     try:
         client = OpenAI(
             api_key=os.getenv('DEEPSEEK_API_KEY'),
@@ -36,4 +42,4 @@ def stream_chat():
         raise
 
 if __name__ == "__main__":
-    stream_chat() 
+    stream_chat()

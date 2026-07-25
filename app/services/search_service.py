@@ -1,4 +1,11 @@
-from typing import List, Dict, AsyncGenerator
+"""
+联网搜索增强对话服务。
+
+先通过 SerpAPI 执行搜索，再将搜索结果作为上下文喂给 DeepSeek 模型，
+使模型能够基于实时互联网信息生成回答。使用 DeepSeek Function Calling 机制。
+"""
+
+from typing import Any, AsyncGenerator
 import json
 import asyncio
 from app.tools.search import SearchTool
@@ -6,12 +13,15 @@ from openai import AsyncOpenAI
 from app.core.config import settings
 
 class SearchService:
+    """联网搜索增强的对话服务"""
+
     def __init__(self):
-        self.client = AsyncOpenAI(
+        self.client: Any = AsyncOpenAI(
             api_key=settings.DEEPSEEK_API_KEY,
             base_url=settings.DEEPSEEK_BASE_URL
         )
         self.search_tool = SearchTool()
+        # 定义 Function Calling 工具，让模型知道可以调用 search 函数
         self.tools = [
             {
                 "type": "function",
@@ -32,8 +42,8 @@ class SearchService:
             }
         ]
 
-    async def _call_with_tool(self, messages: List[Dict]) -> Dict:
-        """调用模型并获取工具调用结果"""
+    async def _call_with_tool(self, messages: Any) -> dict[str, Any]:
+        """调用模型并获取工具调用结果，让模型决定何时需要搜索以及搜索什么"""
         try:
             # 先尝试强制使用工具
             response = await self.client.chat.completions.create(
@@ -136,6 +146,7 @@ class SearchService:
                     tool_call = message["tool_calls"][0]
                     print(f"Tool call: {tool_call}")
                     
+                    args: dict[str, Any] = {}
                     try:
                         # 解析搜索参数
                         args = json.loads(tool_call["function"]["arguments"])

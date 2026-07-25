@@ -1,10 +1,17 @@
+"""
+DeepSeek 对话对比测试脚本。
+
+分别测试同步（非流式）和流式两种模式的聊天效果，仅用于开发调试。
+"""
+
 from openai import OpenAI
 
-# 直接硬编码配置，仅用于测试
+# 测试用 API 密钥（请替换为实际密钥）
 API_KEY = "sk-fb7369c51357447d9bfa082b012346d4"
 BASE_URL = "https://api.deepseek.com/v1"
 
 def test_sync():
+    """同步模式测试：一次性获取完整回复"""
     client = OpenAI(
         api_key=API_KEY,
         base_url=BASE_URL
@@ -22,6 +29,7 @@ def test_sync():
     print(response.choices[0].message.content)
 
 def test_stream():
+    """流式模式测试：逐个 token 实时打印回复"""
     client = OpenAI(
         api_key=API_KEY,
         base_url=BASE_URL
