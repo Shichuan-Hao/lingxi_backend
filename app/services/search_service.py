@@ -20,14 +20,14 @@ class SearchService:
             base_url=settings.DEEPSEEK_BASE_URL
         )
         self.model = settings.DEEPSEEK_MODEL
-        self.search_tool = SearchTool()
+        self.search_tool = SearchTool()  # 检索工具
         
-        # 初始化工具注册中心
+        # 初始化工具注册中心，统一的工具中心，集成多个
         self.tool_registry = ToolRegistry()
         
         # 注册搜索工具 - 直接使用定义好的描述
         self.tool_registry.register(FunctionTool(
-            **SEARCH_TOOL,  # 展开工具定义
+            **SEARCH_TOOL,  # 展开工具定义 jsonSCHEAM
             handler=self._handle_search
         ))
         
@@ -202,10 +202,15 @@ class SearchService:
                         content = chunk.choices[0].delta.content
                         full_response.append(content)
                         # 包装直接回答的内容
-                        yield f"data: {json.dumps({
-                            'type': 'direct_content',
-                            'content': content
-                        }, ensure_ascii=False)}\n\n"
+                        # yield f"data: {json.dumps({
+                        #     'type': 'direct_content',
+                        #     'content': content
+                        # }, ensure_ascii=False)}\n\n"
+                        data = json.dumps({
+                                'type': 'direct_content',
+                                'content': content,
+                            }, ensure_ascii=False)
+                        yield f"data: {data}\n\n"
                 
                 # 如果需要保存对话
                 if on_complete and user_id is not None and conversation_id is not None:

@@ -18,7 +18,7 @@ class SearchTool:
                 "engine": "google",
                 "q": query,
                 "api_key": self.api_key,
-                "num": num_results,
+                "num": num_results,  # 在输入一个问题时，返回的10个连接
                 "hl": "zh-CN",
                 "gl": "cn"
             }
@@ -44,7 +44,7 @@ class SearchTool:
                 results.append({
                     "title": item.get("title", ""),
                     "url": item.get("link", ""),
-                    "snippet": item.get("snippet", ""),
+                    "snippet": item.get("snippet", ""), # 摘要
                 })
                 
         return results[:settings.SEARCH_RESULT_COUNT]  # 使用配置中的数量限制结果 
