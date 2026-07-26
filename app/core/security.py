@@ -1,9 +1,3 @@
-"""
-JWT 认证安全模块。
-
-提供 JWT Token 的签发、解码和用户身份验证，
-包括 OAuth2 密码流认证和 Bearer Token 依赖注入。
-"""
 from datetime import datetime, timedelta
 from typing import Optional
 from jose import JWTError, jwt

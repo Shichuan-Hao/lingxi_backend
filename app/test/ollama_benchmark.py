@@ -127,7 +127,7 @@ class OllamaBenchmark:
                 "error": str(e)
             }
 
-    async def test_single_request(self, num_tests: int = 10):
+    async def test_single_request(self, num_tests: int = 5):
         """测试单个请求的性能"""
         logger.info("开始测试单个请求性能...")
         
@@ -487,8 +487,8 @@ class OllamaBenchmark:
 
 async def main():
     benchmark = OllamaBenchmark(
-        url="http://127.0.0.1:11434",  # 这里替换成实际的ollama endpoint
-        model="deepseek-r1:7b"             # 这里替换成实际要进行测试的模型名称
+        url="http://192.168.110.131:11434",  # 这里替换成实际的ollama endpoint
+        model="deepseek-r1:1.5b"             # 这里替换成实际要进行测试的模型名称
     )
     
     try:

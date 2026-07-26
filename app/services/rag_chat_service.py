@@ -1,9 +1,3 @@
-"""
-RAG 文档问答服务。
-
-基于已建立的文档索引进行检索增强生成：
-先通过向量搜索找到相关文档片段，再结合用户问题调用 LLM 生成回答。
-"""
 from typing import List, Dict, AsyncGenerator
 from .embedding_service import EmbeddingService
 from openai import AsyncOpenAI

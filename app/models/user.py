@@ -1,9 +1,3 @@
-"""
-用户数据库模型。
-
-SQLAlchemy ORM 模型，管理用户账户信息，
-包含用户名、邮箱、密码哈希、状态、登录时间等。
-"""
 from sqlalchemy import Column, Integer, String, DateTime, func
 from sqlalchemy.orm import relationship
 from app.core.database import Base

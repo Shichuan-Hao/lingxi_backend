@@ -1,9 +1,3 @@
-"""
-MySQL 异步数据库连接模块。
-
-使用 SQLAlchemy 异步引擎连接 MySQL（aiomysql 驱动），
-提供数据库会话（AsyncSession）和声明式基类（Base）。
-"""
 import logging
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker, declarative_base

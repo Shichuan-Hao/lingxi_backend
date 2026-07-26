@@ -1,9 +1,3 @@
-"""
-结构化日志系统。
-
-基于 loguru 提供按服务分类的日志记录，支持日志文件轮转、
-控制台彩色输出、结构化 JSON 日志等功能。
-"""
 from loguru import logger
 import sys
 from pathlib import Path
@@ -46,7 +40,6 @@ logger.add(
     encoding="utf-8"
 )
 
-# service 区分每个请求类型，是模型还是FAST API
 def get_logger(service: str):
     """获取带有服务名称的 logger"""
     return logger.bind(service=service)

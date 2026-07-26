@@ -1,9 +1,3 @@
-"""
-用户相关 Pydantic Schema。
-
-定义用户注册、登录、响应的数据验证模型，
-用于 API 请求/响应的序列化和校验。
-"""
 from pydantic import BaseModel, EmailStr
 from typing import Optional
 from datetime import datetime

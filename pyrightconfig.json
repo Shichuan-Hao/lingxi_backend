@@ -1,9 +1,0 @@
-{
-    "include": ["app"],
-    "exclude": ["**/__pycache__", "logs"],
-    "pythonVersion": "3.11",
-    "typeCheckingMode": "standard",
-    "reportMissingTypeStubs": false,
-    "reportMissingImports": false
-}
- 

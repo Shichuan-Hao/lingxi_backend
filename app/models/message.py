@@ -1,9 +1,3 @@
-"""
-消息数据库模型。
-
-SQLAlchemy ORM 模型，记录会话中的单条消息，
-包含发送角色、内容、Token 用量等字段。
-"""
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, func
 from sqlalchemy.orm import relationship
 from app.core.database import Base

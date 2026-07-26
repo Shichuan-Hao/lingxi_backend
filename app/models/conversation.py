@@ -1,9 +1,3 @@
-"""
-会话数据库模型。
-
-SQLAlchemy ORM 模型，记录用户与 AI 的对话会话，
-包含会话类型、标题、状态等字段。
-"""
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, func, Enum
 from sqlalchemy.orm import relationship
 from app.core.database import Base
@@ -20,6 +14,7 @@ class Conversation(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
+    title = Column(String(100), nullable=False)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
     status = Column(String(20), default="ongoing")

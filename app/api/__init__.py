@@ -1,9 +1,3 @@
-"""
-API 路由注册入口。
-
-汇总所有子路由模块，暴露为统一的 api_router，
-由 main.py 挂载到 FastAPI 应用上。
-"""
 from fastapi import APIRouter
 from app.api.auth import router as auth_router
 
