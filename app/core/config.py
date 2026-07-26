@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     # Search settings
     SERPAPI_KEY: str
     SEARCH_RESULT_COUNT: int = 3
+    SEARCH_TIMEOUT: int = 8  # 搜索超时时间（秒）
     
     # Database settings
     DB_HOST: str
@@ -54,6 +55,9 @@ class Settings(BaseSettings):
     EMBEDDING_TYPE: str = "ollama"  # ollama 或 sentence_transformer
     EMBEDDING_MODEL: str = "bge-m3"  # ollama embedding模型
     EMBEDDING_THRESHOLD: float = 0.90  # 语义相似度阈值
+    
+    # HuggingFace settings
+    HF_ENDPOINT: str = "https://huggingface.co"
     
     @property
     def DATABASE_URL(self) -> str:

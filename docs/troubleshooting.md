@@ -53,17 +53,16 @@ pydantic_core._pydantic_core.ValidationError: 4 validation errors for Settings
 
 ### 解决方案
 
-**修改 1：`app/core/config.py`** — 在 `Config` 中添加 `extra = "ignore"`：
+**修改 1（`HF_ENDPOINT` Extra forbidden）：`app/core/config.py`** — 在 `Settings` 中定义 `HF_ENDPOINT` 字段：
 
 ```python
-class Config:
-    env_file = str(ENV_FILE)
-    env_file_encoding = "utf-8"
-    case_sensitive = True
-    extra = "ignore"  # 忽略 .env 中未定义的额外字段
+# Embedding settings 区域新增
+HF_ENDPOINT: str = "https://huggingface.co"
 ```
 
-**修改 2：`.env`** — 将 `REDIS_URL` 拆分为独立字段：
+> 注意：优先使用「定义字段」而非 `extra = "ignore"`，这样可以显式管理所有配置项，避免遗漏。
+
+**修改 2（`REDIS_HOST` / `REDIS_PORT` Field required）：`.env`** — 将 `REDIS_URL` 拆分为独立字段：
 
 ```env
 # 旧写法（错误）
@@ -83,10 +82,10 @@ REDIS_PASSWORD=
 | 问题类型 | 原因 | 预防措施 |
 |---------|------|---------|
 | Field required | `.env` 变量名与 `Settings` 字段名不一致 | 添加新配置时确保两边命名完全一致 |
-| Extra forbidden | `.env` 中有 Settings 未定义的变量 | 在 Config 中设置 `extra = "ignore"`，或加为可选字段 |
+| Extra forbidden | `.env` 中有 Settings 未定义的变量 | 优先在 Settings 中显式定义该字段（带默认值），而非用 `extra = "ignore"` 静默忽略 |
 | `@property` vs 字段 | 把计算属性误当成可配置字段 | `@property` 不能从 `.env` 注入，需要用独立原始字段 |
 
-**核心原则：`.env` 中的每个变量名必须与 `Settings` 类中的字段名一一对应（区分大小写）。**
+**核心原则：`.env` 中的每个变量名必须与 `Settings` 类中的字段名一一对应（区分大小写）。新增环境变量时，同步在 `Settings` 中定义对应字段。**
 
 ---
 
@@ -226,3 +225,94 @@ print(f"AI助手: {content}")
 | 编码错误 | LLM 输出中混入非法 Unicode 代理字符 | 对外部 API 返回的文本始终做编码清洗 |
 
 **核心原则：任何来自 LLM API 的文本内容，在打印、存储、序列化之前，都应做一次 `encode('utf-8', errors='replace').decode('utf-8')` 安全过滤。**
+
+---
+
+## 3. 创建会话报错 `Multiple rows were found when one or none was required`
+
+### 问题现象
+
+POST `/api/conversations` 接口返回 500，日志显示：
+
+```
+Error creating conversation: Multiple rows were found when one or none was required
+```
+
+### 原因分析
+
+`create_conversation` 中查询已有空会话时使用了 `scalar_one_or_none()`：
+
+```python
+stmt = select(Conversation).where(
+    Conversation.user_id == user_id,
+    Conversation.title == "新会话"
+).order_by(Conversation.created_at.desc())
+
+result = await db.execute(stmt)
+existing_conversation = result.scalar_one_or_none()  # 多行时抛异常
+```
+
+当用户多次刷新页面，每次都触发创建 title 为"新会话"的空会话，但又没发过消息（导致未改名），表中会积累多条同名空会话。`scalar_one_or_none()` 要求最多返回 1 行，遇到多行直接抛异常。
+
+### 解决方案
+
+**文件：`app/services/conversation_service.py`** — 将 `scalar_one_or_none()` 改为 `scalars().first()`：
+
+修复前：
+```python
+async def create_conversation(
+    self, user_id: int, title: Optional[str] = None
+):
+    from app.models.conversation import Conversation
+    async with AsyncSessionLocal() as db:
+        stmt = select(Conversation).where(
+            Conversation.user_id == user_id,
+            Conversation.title == "新会话"
+        ).order_by(Conversation.created_at.desc())
+
+        result = await db.execute(stmt)
+        existing_conversation = result.scalar_one_or_none()  # 多行时抛异常
+
+        if existing_conversation:
+            return existing_conversation
+
+        conversation = Conversation(user_id=user_id, title="新会话")
+        db.add(conversation)
+        await db.commit()
+        await db.refresh(conversation)
+        return conversation
+```
+
+修复后：
+```python
+async def create_conversation(
+    self, user_id: int, title: Optional[str] = None
+):
+    from app.models.conversation import Conversation
+    async with AsyncSessionLocal() as db:
+        stmt = select(Conversation).where(
+            Conversation.user_id == user_id,
+            Conversation.title == "新会话"
+        ).order_by(Conversation.created_at.desc())
+
+        result = await db.execute(stmt)
+        existing_conversation = result.scalars().first()  # 可能有多条，取最新一条
+
+        if existing_conversation:
+            return existing_conversation
+
+        conversation = Conversation(user_id=user_id, title="新会话")
+        db.add(conversation)
+        await db.commit()
+        await db.refresh(conversation)
+        return conversation
+```
+
+### 经验总结
+
+| 方法 | 行为 | 适用场景 |
+|------|------|---------|
+| `scalar_one_or_none()` | 最多 1 行，多行抛异常 | 确定唯一值（如 id 精确查询） |
+| `scalars().first()` | 取第一行，多行不报错 | 带排序条件、可能有多条结果 |
+
+**核心原则：条件中不含唯一约束时，禁止使用 `scalar_one` / `scalar_one_or_none`，用 `scalars().first()` 或 `scalars().all()` 代替。**

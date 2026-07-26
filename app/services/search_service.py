@@ -122,65 +122,87 @@ class SearchService:
                     tool_call = tool_calls[0]
                     logger.info(f"Processing tool call: {tool_call}")
                     
+                    # 先返回一个类型标识，告诉前端搜索已开始（避免前端一直卡住）
+                    yield f"data: {json.dumps({'type': 'search_start'}, ensure_ascii=False)}\n\n"
+                    
+                    search_results = []
                     try:
-                        # 执行工具调用
-                        search_results = await self.tool_registry.execute_tool(
-                            tool_call.function.name,
-                            tool_call.function.arguments
+                        # 执行工具调用，设置总超时，避免同步请求长时间阻塞
+                        search_results = await asyncio.wait_for(
+                            self.tool_registry.execute_tool(
+                                tool_call.function.name,
+                                tool_call.function.arguments
+                            ),
+                            timeout=getattr(settings, "SEARCH_TIMEOUT", 8) + 3  # 比底层 timeout 多 3 秒缓冲
                         )
                         logger.info(f"Got {len(search_results)} search results")
-                        
-                        if search_results:
-                            # 构建上下文内容
-                            context = []
-                            for result in search_results:
-                                context.append(
-                                    f"来源：{result['title']}\n"
-                                    f"链接：{result['url']}\n"
-                                    f"内容：{result['snippet']}\n"
-                                )
-                            
-                            # 构造带上下文的提示
-                            context_prompt = SEARCH_SUMMARY_PROMPT.format(
-                                context="\n---\n".join(context),
-                                query=query,
-                                cur_date=datetime.now().strftime("%Y年%m月%d日")
-                            )
-                            
-                            # 先返回一个类型标识，告诉前端这是搜索结果
-                            yield f"data: {json.dumps({'type': 'search_start'}, ensure_ascii=False)}\n\n"
-                            
-                            # 返回搜索结果
-                            search_data = {
-                                "type": "search_results",  # 保持原有的类型标识
-                                "total": len(search_results),
-                                "query": json.loads(tool_call.function.arguments)["query"],
-                                "results": [
-                                    {
-                                        "title": result["title"],
-                                        "url": result["url"],
-                                        "snippet": result["snippet"]
-                                    }
-                                    for result in search_results
-                                ]
-                            }
-                            yield f"data: {json.dumps(search_data, ensure_ascii=False)}\n\n"
-                            
-                            # 使用新的消息上下文生成回复
-                            async for chunk in await self.client.chat.completions.create(
-                                model=self.model,
-                                messages=[
-                                    {"role": "system", "content": context_prompt}
-                                ],
-                                stream=True
-                            ):      
-
-                                if chunk.choices[0].delta.content:
-                                    content = json.dumps(chunk.choices[0].delta.content, ensure_ascii=False)
-                                    yield f"data: {content}\n\n"
-             
+                    except asyncio.TimeoutError:
+                        logger.warning(f"Search timeout for query: {query}")
+                        yield f"data: {json.dumps({'type': 'search_error', 'message': '搜索超时，已自动切换为直接回答'}, ensure_ascii=False)}\n\n"
                     except Exception as e:
-                        pass
+                        logger.error(f"Search tool error: {str(e)}", exc_info=True)
+                        yield f"data: {json.dumps({'type': 'search_error', 'message': '搜索服务暂不可用，已自动切换为直接回答'}, ensure_ascii=False)}\n\n"
+                    
+                    if search_results:
+                        # 构建上下文内容
+                        context = []
+                        for result in search_results:
+                            context.append(
+                                f"来源：{result['title']}\n"
+                                f"链接：{result['url']}\n"
+                                f"内容：{result['snippet']}\n"
+                            )
+                        
+                        # 构造带上下文的提示
+                        context_prompt = SEARCH_SUMMARY_PROMPT.format(
+                            context="\n---\n".join(context),
+                            query=query,
+                            cur_date=datetime.now().strftime("%Y年%m月%d日")
+                        )
+                        
+                        # 返回搜索结果
+                        search_data = {
+                            "type": "search_results",  # 保持原有的类型标识
+                            "total": len(search_results),
+                            "query": json.loads(tool_call.function.arguments)["query"],
+                            "results": [
+                                {
+                                    "title": result["title"],
+                                    "url": result["url"],
+                                    "snippet": result["snippet"]
+                                }
+                                for result in search_results
+                            ]
+                        }
+                        yield f"data: {json.dumps(search_data, ensure_ascii=False)}\n\n"
+                        
+                        # 使用新的消息上下文生成回复
+                        async for chunk in await self.client.chat.completions.create(
+                            model=self.model,
+                            messages=[
+                                {"role": "system", "content": context_prompt}
+                            ],
+                            stream=True
+                        ):      
+
+                            if chunk.choices[0].delta.content:
+                                content = json.dumps(chunk.choices[0].delta.content, ensure_ascii=False)
+                                yield f"data: {content}\n\n"
+                    else:
+                        # 搜索失败或结果为空，降级为直接回答
+                        logger.info("Search failed or returned empty, falling back to direct answer")
+                        async for chunk in await self.client.chat.completions.create(
+                            model=self.model,
+                            messages=messages,
+                            stream=True
+                        ):
+                            if chunk.choices and chunk.choices[0].delta.content:
+                                content = chunk.choices[0].delta.content
+                                data = json.dumps({
+                                    'type': 'direct_content',
+                                    'content': content,
+                                }, ensure_ascii=False)
+                                yield f"data: {data}\n\n"
                 
             elif choice.finish_reason == "stop":
                 # 直接回答的情况，使用流式响应

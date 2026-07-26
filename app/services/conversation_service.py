@@ -27,7 +27,7 @@ class ConversationService:
             ).order_by(Conversation.created_at.desc())
             
             result = await db.execute(stmt)
-            existing_conversation = result.scalar_one_or_none()
+            existing_conversation = result.scalars().first()  # 可能有多条，取最新一条
             
             # 检查这个会话是否有消息
             if existing_conversation:
