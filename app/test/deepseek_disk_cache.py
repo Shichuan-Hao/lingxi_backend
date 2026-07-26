@@ -13,12 +13,17 @@ client = OpenAI(
 )
 
 
+def safe_str(s: str) -> str:
+    """移除字符串中的非法 Unicode 代理字符，防止 UTF-8 编码报错"""
+    return s.encode('utf-8', errors='replace').decode('utf-8')
+
+
 def chat_with_cache(messages):
     """单轮对话，返回响应并打印缓存情况"""
     start_time = time.time()
     
     response = client.chat.completions.create(
-        model="deepseek-chat",
+        model="deepseek-v4-pro",
         messages=messages
     )
     
@@ -54,14 +59,17 @@ def main():
             # 获取模型回复
             assistant_message = chat_with_cache(messages)
             
+            # 过滤非法 Unicode 代理字符
+            content = safe_str(assistant_message.content)
+            
             # 添加模型消息到历史列表中
             messages.append({
                 "role": assistant_message.role,
-                "content": assistant_message.content
+                "content": content
             })
             
             # 打印模型回复
-            print(f"AI助手: {assistant_message.content}")
+            print(f"AI助手: {content}")
             
     except KeyboardInterrupt:
         print("\n对话已终止")

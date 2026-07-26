@@ -69,5 +69,6 @@ class Settings(BaseSettings):
         env_file = str(ENV_FILE)  # 使用绝对路径
         env_file_encoding = "utf-8"
         case_sensitive = True
+        extra = "ignore"  # 忽略 .env 中未定义的额外字段（如 HF_ENDPOINT）
 
 settings = Settings() 

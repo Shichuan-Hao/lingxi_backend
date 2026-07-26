@@ -1,4 +1,4 @@
-from typing import List, Dict, AsyncGenerator, Optional
+from typing import List, Dict, AsyncGenerator, Callable, Optional
 import aiohttp
 import json
 from app.core.config import settings
@@ -27,6 +27,8 @@ class OllamaService:
         self, 
         messages: List[Dict],
         user_id: Optional[int] = None,
+        conversation_id: Optional[int] = None,
+        on_complete: Optional[Callable[[int, int, List[Dict], str], None]] = None,
         model: str = "deepseek-r1:32b"
     ) -> AsyncGenerator[str, None]:
         """流式生成回复"""
@@ -49,6 +51,10 @@ class OllamaService:
                 # 模拟流式返回
                 async for chunk in self._stream_cached_response(cached_response):
                     yield chunk
+                
+                # 保存消息到数据库
+                if on_complete and user_id is not None and conversation_id is not None:
+                    await on_complete(user_id, conversation_id, messages, cached_response)
                 return
 
             # 缓存未命中,调用API
@@ -88,6 +94,10 @@ class OllamaService:
             
             response_time = time.time() - start_time
             logger.info(f"Cache miss. Response time: {response_time:.4f} seconds")
+            
+            # 保存消息到数据库
+            if on_complete and user_id is not None and conversation_id is not None:
+                await on_complete(user_id, conversation_id, messages, complete_response)
 
         except Exception as e:
             logger.error(f"Error in generate_stream: {str(e)}", exc_info=True)
