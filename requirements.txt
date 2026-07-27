@@ -16,7 +16,7 @@ python-multipart>=0.0.5
 loguru==0.7.2
 sqlalchemy[asyncio]>=2.0.0
 aiomysql>=0.1.1
-cryptography
+cryptography  
 python-jose[cryptography]>=3.3.0
 passlib==1.7.4
 bcrypt==4.0.1

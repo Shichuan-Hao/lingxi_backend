@@ -18,22 +18,20 @@ class SearchTool:
                 "engine": "google",
                 "q": query,
                 "api_key": self.api_key,
-                "num": num_results,  # 在输入一个问题时，返回的10个连接
+                "num": num_results,
                 "hl": "zh-CN",
                 "gl": "cn"
             }
 
-            # 支持从配置读取超时，默认 8 秒
-            timeout = getattr(settings, "SEARCH_TIMEOUT", 8)
             response = requests.get(
                 "https://serpapi.com/search",
                 params=params,
-                timeout=timeout
+                timeout=15
             )
             response.raise_for_status()
-
+            
             return self._parse_results(response.json())
-
+            
         except Exception as e:
             print(f"搜索失败: {str(e)}")
             return []
@@ -46,7 +44,7 @@ class SearchTool:
                 results.append({
                     "title": item.get("title", ""),
                     "url": item.get("link", ""),
-                    "snippet": item.get("snippet", ""), # 摘要
+                    "snippet": item.get("snippet", ""),
                 })
                 
         return results[:settings.SEARCH_RESULT_COUNT]  # 使用配置中的数量限制结果 
