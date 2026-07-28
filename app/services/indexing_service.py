@@ -1,6 +1,7 @@
 import os
 import asyncio
 import logging
+import re
 from pathlib import Path
 from typing import Optional, Dict, Any
 import mimetypes
@@ -18,15 +19,25 @@ from app.core.logger import get_logger
 
 logger = get_logger(service="indexing")
 
+# 支持的文档格式 → 文本提取器映射
+_TEXT_EXTRACTORS: Dict[str, str] = {
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',  # .docx
+    'application/msword': 'docx',                                                         # .doc（旧格式）
+}
+
 class IndexingService:
     def __init__(self):
         self.project_dir = settings.GRAPHRAG_PROJECT_DIR
         self.data_dir_name = settings.GRAPHRAG_DATA_DIR
         self.data_dir = os.path.join(self.project_dir, self.data_dir_name)
         
-
         # 默认配置文件
         self.default_config = 'settings.yaml'
+        
+        # 文件类型 → 配置文件映射（按需扩展，未匹配的类型走 default_config）
+        self.config_mapping = {
+            'application/pdf': 'settings.yaml',
+        }
         
     def _get_file_type(self, file_path: str) -> str:
         """获取文件MIME类型"""
@@ -69,6 +80,58 @@ class IndexingService:
         
         return dest_path
     
+    def _extract_text_from_docx(self, file_path: str) -> str:
+        """从 .docx 文件提取纯文本"""
+        from docx import Document
+        doc = Document(file_path)
+        paragraphs = []
+        for para in doc.paragraphs:
+            text = para.text.strip()
+            if text:
+                paragraphs.append(text)
+        # 也提取表格中的文本
+        for table in doc.tables:
+            for row in table.rows:
+                row_texts = []
+                for cell in row.cells:
+                    cell_text = cell.text.strip()
+                    if cell_text:
+                        row_texts.append(cell_text)
+                if row_texts:
+                    paragraphs.append(' | '.join(row_texts))
+        return '\n'.join(paragraphs)
+    
+    def _convert_to_text(self, file_path: str, file_type: str) -> str:
+        """
+        将非纯文本文件转换为 .txt 文件，返回转换后的 txt 文件路径。
+        如果文件本身就是纯文本或不支持转换，返回原路径（由 GraphRAG settings.yaml 的 file_pattern 过滤处理）。
+        """
+        extractor = _TEXT_EXTRACTORS.get(file_type)
+        if extractor is None:
+            return file_path  # 不支持的格式，原样返回
+        
+        logger.info(f"正在将 {file_type} 文件转换为纯文本: {os.path.basename(file_path)}")
+        
+        if extractor == 'docx':
+            text_content = self._extract_text_from_docx(file_path)
+        else:
+            return file_path
+        
+        if not text_content.strip():
+            logger.warning(f"文件 {os.path.basename(file_path)} 提取的文本为空")
+            return file_path
+        
+        # 写入同目录下的 .txt 文件
+        base_name = os.path.splitext(os.path.basename(file_path))[0]
+        output_dir = os.path.dirname(file_path)
+        txt_path = os.path.join(output_dir, f"{base_name}.txt")
+        
+        with open(txt_path, 'w', encoding='utf-8') as f:
+            f.write(text_content)
+        
+        logger.info(f"文本提取完成，已保存至: {txt_path} ({len(text_content)} 字符)")
+        return txt_path
+    
     async def process_file(self, file_info: Dict[str, Any]) -> Dict[str, Any]:
         """处理单个文件的索引构建"""
         try:
@@ -78,11 +141,21 @@ class IndexingService:
             
             logger.info(f"开始处理文件: {file_path}, 类型: {file_type}, 用户ID: {user_id}")
             
+            # 非纯文本文件需要先提取文本，转换为 .txt
+            file_to_index = self._convert_to_text(file_path, file_type)
+            
             # 准备用户目录
             user_input_dir, user_output_dir = self._prepare_user_directories(user_id)
             
-            # 复制文件到输入目录
-            input_file_path = self._copy_file_to_input_dir(file_path, user_input_dir)
+            # 清空输入目录中的旧文件（防止之前失败的 .docx/.pdf 等残留干扰）
+            for old_file in os.listdir(user_input_dir):
+                old_path = os.path.join(user_input_dir, old_file)
+                if os.path.isfile(old_path):
+                    os.remove(old_path)
+                    logger.debug(f"已清理输入目录旧文件: {old_file}")
+            
+            # 复制文件到输入目录（复制的是 txt 而非原始二进制文件）
+            input_file_path = self._copy_file_to_input_dir(file_to_index, user_input_dir)
             
             # 获取配置文件
             config_file = self._get_config_file(file_type)
@@ -98,11 +171,12 @@ class IndexingService:
                 config_path = os.path.join(self.data_dir, self.default_config)
             
             # 设置配置覆盖
+            # 注意：file_pattern 中的文件名需要转义正则特殊字符（如 .）
+            safe_basename = re.escape(os.path.basename(input_file_path))
             config_overrides = {
                 'input.base_dir': user_input_dir,
                 'output.base_dir': user_output_dir,
-                # 更新文件匹配模式以匹配文件名
-                'input.file_pattern': f".*{os.path.basename(input_file_path)}$$"
+                'input.file_pattern': f".*{safe_basename}$$"
             }
             
             # 加载配置

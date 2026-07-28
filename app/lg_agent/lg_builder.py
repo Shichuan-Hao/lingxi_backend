@@ -71,7 +71,7 @@ async def analyze_and_route_query(
     """
     # 选择模型实例，通过.env文件中的AGENT_SERVICE参数选择
     if settings.AGENT_SERVICE == ServiceType.DEEPSEEK:
-        model = ChatDeepSeek(api_key=settings.DEEPSEEK_API_KEY, model_name=settings.DEEPSEEK_MODEL, temperature=0.7, tags=["router"])
+        model = ChatDeepSeek(api_key=settings.DEEPSEEK_API_KEY, model_name=settings.DEEPSEEK_MODEL, temperature=0.7, extra_body={"thinking": {"type": "disabled"}}, tags=["router"])
         logger.info(f"Using DeepSeek model: {settings.DEEPSEEK_MODEL}")
     else:
         model = ChatOllama(model=settings.OLLAMA_AGENT_MODEL, base_url=settings.OLLAMA_BASE_URL, temperature=0.7, tags=["router"])
@@ -140,7 +140,7 @@ async def respond_to_general_query(
     
     # 使用大模型生成回复
     if settings.AGENT_SERVICE == ServiceType.DEEPSEEK:
-        model = ChatDeepSeek(api_key=settings.DEEPSEEK_API_KEY, model_name=settings.DEEPSEEK_MODEL, temperature=0.7, tags=["general_query"])
+        model = ChatDeepSeek(api_key=settings.DEEPSEEK_API_KEY, model_name=settings.DEEPSEEK_MODEL, temperature=0.7, extra_body={"thinking": {"type": "disabled"}}, tags=["general_query"])
     else:
         model = ChatOllama(model=settings.OLLAMA_AGENT_MODEL, base_url=settings.OLLAMA_BASE_URL, temperature=0.7, tags=["general_query"])
     
@@ -170,7 +170,7 @@ async def get_additional_info(
     
     # 使用大模型生成回复
     if settings.AGENT_SERVICE == ServiceType.DEEPSEEK:
-        model = ChatDeepSeek(api_key=settings.DEEPSEEK_API_KEY, model_name=settings.DEEPSEEK_MODEL, temperature=0.7, tags=["additional_info"])
+        model = ChatDeepSeek(api_key=settings.DEEPSEEK_API_KEY, model_name=settings.DEEPSEEK_MODEL, temperature=0.7, extra_body={"thinking": {"type": "disabled"}}, tags=["additional_info"])
     else:
         model = ChatOllama(model=settings.OLLAMA_AGENT_MODEL, base_url=settings.OLLAMA_BASE_URL, temperature=0.7, tags=["additional_info"])
 
@@ -353,7 +353,7 @@ async def create_image_query(
                     
                     # 构建回复请求
                     if settings.AGENT_SERVICE == ServiceType.DEEPSEEK:
-                        model = ChatDeepSeek(api_key=settings.DEEPSEEK_API_KEY, model_name=settings.DEEPSEEK_MODEL, temperature=0.7, tags=["image_query"])
+                        model = ChatDeepSeek(api_key=settings.DEEPSEEK_API_KEY, model_name=settings.DEEPSEEK_MODEL, temperature=0.7, extra_body={"thinking": {"type": "disabled"}}, tags=["image_query"])
                     else:
                         model = ChatOllama(model=settings.OLLAMA_AGENT_MODEL, base_url=settings.OLLAMA_BASE_URL, temperature=0.7, tags=["image_query"])
                     # 使用专门的图片查询提示模板
@@ -400,17 +400,19 @@ async def create_research_plan(
 
     # 使用大模型生成查询/多跳、并行查询计划
     if settings.AGENT_SERVICE == ServiceType.DEEPSEEK:
-        model = ChatDeepSeek(api_key=settings.DEEPSEEK_API_KEY, model_name=settings.DEEPSEEK_MODEL, temperature=0.7, tags=["research_plan"])
+        model = ChatDeepSeek(api_key=settings.DEEPSEEK_API_KEY, model_name=settings.DEEPSEEK_MODEL, temperature=0.7, extra_body={"thinking": {"type": "disabled"}}, tags=["research_plan"])
     else:
         model = ChatOllama(model=settings.OLLAMA_AGENT_MODEL, base_url=settings.OLLAMA_BASE_URL, temperature=0.7, tags=["research_plan"])
     
     # 初始化必要参数
     # 1. Neo4j图数据库连接 - 使用配置中的连接信息
+    neo4j_graph = None
     try:
         neo4j_graph = get_neo4j_graph()
         logger.info("success to get Neo4j graph database connection")
     except Exception as e:
         logger.error(f"failed to get Neo4j graph database connection: {e}")
+        # 不中断流程，但后续知识图谱工具会因 graph=None 返回空结果
 
     # 2. 创建自定义检索器实例，根据 Graph Schema 创建 Cypher 示例，用来引导大模型生成正确的Cypher 查询语句
     cypher_retriever = NorthwindCypherRetriever()
@@ -435,7 +437,11 @@ async def create_research_plan(
     不包含：服装、鞋类、体育用品、化妆品、食品等非智能家居产品。
     """
 
-    # 创建多工具工作流
+    # 创建多工具工作流（Neo4j 不可用时跳过知识图谱查询）
+    if neo4j_graph is None:
+        logger.warning("Neo4j 不可用，跳过知识图谱查询，返回空结果")
+        return {"messages": [AIMessage(content="知识图谱服务暂不可用，请检查 Neo4j 连接配置及 APOC 插件是否已安装。")]}
+    
     multi_tool_workflow = create_multi_tool_workflow(
         llm=model,
         graph=neo4j_graph,
@@ -475,7 +481,7 @@ async def check_hallucinations(
         dict[str, Router]: A dictionary containing the 'router' key with the classification result (classification type and logic).
     """
     if settings.AGENT_SERVICE == ServiceType.DEEPSEEK:
-        model = ChatDeepSeek(api_key=settings.DEEPSEEK_API_KEY, model_name=settings.DEEPSEEK_MODEL, temperature=0.7, tags=["hallucinations"])
+        model = ChatDeepSeek(api_key=settings.DEEPSEEK_API_KEY, model_name=settings.DEEPSEEK_MODEL, temperature=0.7, extra_body={"thinking": {"type": "disabled"}}, tags=["hallucinations"])
     else:
         model = ChatOllama(model=settings.OLLAMA_AGENT_MODEL, base_url=settings.OLLAMA_BASE_URL, temperature=0.7, tags=["hallucinations"])
     
