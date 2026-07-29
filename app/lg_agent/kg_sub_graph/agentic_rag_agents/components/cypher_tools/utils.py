@@ -464,6 +464,7 @@ def create_text2cypher_validation_node(
 
         # 如果启用了大模型验证，会使用语言模型检查Cypher查询的更高级错误，
         # 例如语义上是否符合用户问题、属性映射是否正确等。这是一种更智能的验证方式。
+        # 由于多了一层大模型的校验，所以响应的就很慢
         if llm is not None and llm_validation:
             llm_errors = await validate_cypher_query_with_llm(
                 validate_cypher_chain=validate_cypher_chain,

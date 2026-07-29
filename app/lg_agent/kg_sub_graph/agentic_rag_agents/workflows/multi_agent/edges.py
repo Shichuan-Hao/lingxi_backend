@@ -64,7 +64,9 @@ def map_reduce_planner_to_tool_selection(state: OverallState) -> List[Send]:
         Send(
             "tool_selection",
             {
+                # 子任务
                 "question": task.question,
+                # 上一个任务
                 "parent_task": task.parent_task,
             },
         )

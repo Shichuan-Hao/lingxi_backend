@@ -57,58 +57,117 @@ logger = get_logger(service="lg_builder")
 async def analyze_and_route_query(
     state: AgentState, *, config: RunnableConfig
 ) -> dict[str, Router]:
-    """Analyze the user's query and determine the appropriate routing.
+    """分析用户查询并确定路由目标（LangGraph 工作流的第一个业务节点）。
 
-    This function uses a language model to classify the user's query and decide how to route it
-    within the conversation flow.
+    核心职责：
+        将用户的输入（连同历史对话）交给 LLM，让 LLM 对查询意图进行分类，
+        输出一个 Router 结构化对象。后续的 route_query 条件边会根据 Router.type
+        决定流转到哪个下游节点处理。
+
+    工作流程：
+        1. 根据 settings.AGENT_SERVICE 选择大模型（DeepSeek / Ollama）
+        2. 将 ROUTER_SYSTEM_PROMPT 作为 system prompt，拼接历史消息作为上下文
+        3. 通过 LLM 的结构化输出能力（with_structured_output）生成 Router 对象
+        4. 将 Router 结果写入 AgentState，状态写入后由 LangGraph 继续传递
 
     Args:
-        state (AgentState): The current state of the agent, including conversation history.
-        config (RunnableConfig): Configuration with the model used for query analysis.
+        state (AgentState):  当前 Agent 的状态，包含历史对话 messages、
+                             已经走过的 steps、用户 question 等字段。
+        config (RunnableConfig):
+                             运行时配置，由 LangGraph 自动注入，其中包含
+                             用户会话线程 ID、图片路径等可配置信息。
 
     Returns:
-        dict[str, Router]: A dictionary containing the 'router' key with the classification result (classification type and logic).
+        dict[str, Router]:
+                             {'router': Router} 形式的字典，LangGraph 会自动
+                             将返回的 Router 对象合并到 AgentState.router 字段中，
+                             供下游的 route_query 条件边读取并做路由决策。
     """
-    # 选择模型实例，通过.env文件中的AGENT_SERVICE参数选择
+    # ------------------------------------------------------------------
+    # 步骤 1：根据配置选择大模型实例
+    #   - DeepSeek: 线上推理服务，禁用 thinking 模式以减少输出 token
+    #   - Ollama:   本地部署模型，适合离线或低延迟场景
+    # 模型温度设为 0.7，在分类任务中兼顾多样性与稳定性
+    # ------------------------------------------------------------------
     if settings.AGENT_SERVICE == ServiceType.DEEPSEEK:
-        model = ChatDeepSeek(api_key=settings.DEEPSEEK_API_KEY, model_name=settings.DEEPSEEK_MODEL, temperature=0.7, extra_body={"thinking": {"type": "disabled"}}, tags=["router"])
+        model = ChatDeepSeek(
+            api_key=settings.DEEPSEEK_API_KEY,
+            model_name=settings.DEEPSEEK_MODEL,
+            temperature=0.7,
+            extra_body={"thinking": {"type": "disabled"}},  # 禁用思维链输出，只取最终分类结果
+            tags=["router"]
+        )
         logger.info(f"Using DeepSeek model: {settings.DEEPSEEK_MODEL}")
     else:
-        model = ChatOllama(model=settings.OLLAMA_AGENT_MODEL, base_url=settings.OLLAMA_BASE_URL, temperature=0.7, tags=["router"])
+        model = ChatOllama(
+            model=settings.OLLAMA_AGENT_MODEL,
+            base_url=settings.OLLAMA_BASE_URL,
+            temperature=0.7,
+            tags=["router"]
+        )
         logger.info(f"Using Ollama model: {settings.OLLAMA_AGENT_MODEL}")
 
-    # 拼接提示模版 + 用户的实时问题（包含历史上下文对话） 
+    # ------------------------------------------------------------------
+    # 步骤 2：构建对话上下文
+    #   将 ROUTER_SYSTEM_PROMPT（定义分类规则和输出格式的提示词）作为 system
+    #   消息，后面拼接 state.messages（完整的多轮对话历史：Human/AI/ToolMessage）
+    #   这样 LLM 可以结合上下文更准确地进行意图分类
+    # ------------------------------------------------------------------
     messages = [
         {"role": "system", "content": ROUTER_SYSTEM_PROMPT}
     ] + state.messages
     logger.info("-----Analyze user query type-----")
     logger.info(f"History messages: {state.messages}")
-    
-    # 使用结构化输出，输出问题类型
+
+    # ------------------------------------------------------------------
+    # 步骤 3：调用 LLM 进行结构化输出的意图分类
+    #   - model.with_structured_output(Router):
+    #       将 LLM 的文本输出强制解析为 Router TypedDict 结构，
+    #       确保 type 字段只能是预设的 5 种枚举值之一，
+    #       避免自由文本导致后续路由逻辑异常
+    #   - cast(Router, ...):
+    #       类型断言，告诉类型检查器返回值一定是 Router 类型
+    # ------------------------------------------------------------------
     response = cast(
         Router, await model.with_structured_output(Router).ainvoke(messages)
     )
     logger.info(f"Analyze user query type completed, result: {response}")
+    # 返回 Router 对象，LangGraph 会自动将其写入 AgentState.router 字段
     return {"router": response}
 
 def route_query(
     state: AgentState,
 ) -> Literal["respond_to_general_query", "get_additional_info", "create_research_plan", "create_image_query", "create_file_query"]:
-    """根据查询分类确定下一步操作。
+    """LangGraph 条件边路由函数：根据 Router 分类结果决定下一个要执行的节点。
+
+    此函数不执行任何业务逻辑，仅读取 state.router["type"] 并返回目标节点名。
+    LangGraph 会根据返回值自动跳转到对应的节点继续执行。
+
+    特殊处理：
+        如果检测到用户上传了图片（configurable.image_path 存在），无论 LLM 分类
+        结果是什么，都优先转到图片处理节点，确保图片上传场景不被误分类。
 
     Args:
-        state (AgentState): 当前代理状态，包括路由器的分类。
+        state (AgentState): 当前 Agent 状态，其中的 router 字段已由
+                            analyze_and_route_query 节点填充完毕。
 
     Returns:
-        Literal["respond_to_general_query", "get_additional_info", "create_research_plan", "create_image_query", "create_file_query"]: 下一步操作。
+        目标节点名称字符串，取值范围：
+            - "respond_to_general_query"  → 通用对话
+            - "get_additional_info"       → 追问补全 / 守卫校验
+            - "create_research_plan"      → 知识图谱查询
+            - "create_image_query"        → 图片识别
+            - "create_file_query"         → 文件处理
     """
+    # 从 Router 中取出 LLM 分类的查询类型
     _type = state.router["type"]
-    
-    # 检查配置中是否有图片路径，如果有，优先处理为图片查询
+
+    # 图片路径优先：如果用户上传了图片，强制走图片处理，避免被误分类到其他分支
     if hasattr(state, "config") and state.config and state.config.get("configurable", {}).get("image_path"):
         logger.info("检测到图片路径，转为图片查询处理")
         return "create_image_query"
 
+    # 根据分类类型返回对应的下游节点名
     if _type == "general-query":
         return "respond_to_general_query"
     elif _type == "additional-query":
@@ -120,35 +179,62 @@ def route_query(
     elif _type == "file-query":
         return "create_file_query"
     else:
+        # 兜底：理论上不应走到这里，type 已被 structured_output 约束
         raise ValueError(f"Unknown router type {_type}")
     
 async def respond_to_general_query(
     state: AgentState, *, config: RunnableConfig
 ) -> Dict[str, List[BaseMessage]]:
-    """生成对一般查询的响应，完全基于大模型，不会触发任何外部服务的调用，包括自定义工具、知识库查询等。
+    """处理通用对话查询：纯 LLM 自由回答，不走任何工具或知识库。
 
-    当路由器将查询分类为一般问题时，将调用此节点。
+    这是所有路由分支中最轻量的节点，不涉及外部依赖（Neo4j、API、检索器）。
+    当用户的问题属于闲聊、常识问答或不涉及电商业务时，由本节点直接回复。
+
+    执行流程：
+        1. 根据配置选择大模型（DeepSeek / Ollama）
+        2. 将 Router 生成的分类逻辑（logic）注入 GENERAL_QUERY_SYSTEM_PROMPT
+           生成带上下文感知的 system prompt
+        3. 拼接历史消息 + system prompt，调用 LLM 生成最终回复
+        4. 将 AI 回复包装为 messages 列表返回
 
     Args:
-        state (AgentState): 当前代理状态，包括对话历史和路由逻辑。
-        config (RunnableConfig): 用于配置响应生成的模型。
+        state (AgentState): 当前工作流状态，包含历史对话和 router 分类信息。
+        config (RunnableConfig): 运行时配置。
 
     Returns:
-        Dict[str, List[BaseMessage]]: 包含'messages'键的字典，其中包含生成的响应。
+        dict[str, list[BaseMessage]]: {'messages': [AIMessage]} 格式，
+                                       LangGraph 会自动追加到状态消息列表中。
     """
     logger.info("-----generate general-query response-----")
-    
-    # 使用大模型生成回复
+
+    # 步骤 1：选择大模型，温度 0.7 兼顾自然度和稳定性
     if settings.AGENT_SERVICE == ServiceType.DEEPSEEK:
-        model = ChatDeepSeek(api_key=settings.DEEPSEEK_API_KEY, model_name=settings.DEEPSEEK_MODEL, temperature=0.7, extra_body={"thinking": {"type": "disabled"}}, tags=["general_query"])
+        model = ChatDeepSeek(
+            api_key=settings.DEEPSEEK_API_KEY,
+            model_name=settings.DEEPSEEK_MODEL,
+            temperature=0.7,
+            extra_body={"thinking": {"type": "disabled"}},  # 禁用思维链，节省 token
+            tags=["general_query"]
+        )
     else:
-        model = ChatOllama(model=settings.OLLAMA_AGENT_MODEL, base_url=settings.OLLAMA_BASE_URL, temperature=0.7, tags=["general_query"])
-    
+        model = ChatOllama(
+            model=settings.OLLAMA_AGENT_MODEL,
+            base_url=settings.OLLAMA_BASE_URL,
+            temperature=0.7,
+            tags=["general_query"]
+        )
+
+    # 步骤 2：构建 system prompt — 注入 Router 的分类逻辑
+    #   logic 字段是 LLM 在分类时生成的推理说明（如"用户询问天气，属于通用问题"），
+    #   将其注入 system prompt 可以让生成节点理解为什么走到了这个分支
     system_prompt = GENERAL_QUERY_SYSTEM_PROMPT.format(
         logic=state.router["logic"]
     )
-    
+
+    # 步骤 3：拼接消息上下文 — system prompt + 完整多轮对话历史
     messages = [{"role": "system", "content": system_prompt}] + state.messages
+
+    # 步骤 4：调用 LLM 生成回复并返回
     response = await model.ainvoke(messages)
     return {"messages": [response]}
 
@@ -183,7 +269,7 @@ async def get_additional_info(
     except Exception as e:
         logger.error(f"failed to get Neo4j graph database connection: {e}")
 
-    # 定义电商经营范围
+    # 定义电商经营范围（）
     scope_description = """
     个人电商经营范围：智能家居产品，包括但不限于：
     - 智能照明（灯泡、灯带、开关）
@@ -517,6 +603,7 @@ builder.add_node(create_file_query)
 
 # 添加边
 builder.add_edge(START, "analyze_and_route_query")
+# 条件边
 builder.add_conditional_edges("analyze_and_route_query", route_query)
 
 
