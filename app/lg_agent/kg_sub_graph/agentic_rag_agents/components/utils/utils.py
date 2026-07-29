@@ -28,7 +28,7 @@ def retrieve_and_parse_schema_from_graph_for_prompts(graph: Neo4jGraph) -> str:
     2. 提高查询准确性：通过向大语言模型提供准确的数据库结构，大大降低生成错误查询的可能性
     3. 促进零样本学习：即使没有特定领域的示例，模型也能根据提供的结构信息生成符合语法的查询
     """
-    
+    # 拿到 schema 信息
     schema: str = graph.get_schema
 
     # 过滤掉对用户查询不相关的内部结构信息
